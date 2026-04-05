@@ -7,25 +7,25 @@
   "agents": {
     "defaults": {
       "model": {
-        "primary": "anthropic/claude-opus-4-6"
+        "primary": "openai-codex/gpt-5.4"
       },
       "models": {
+        "openai-codex/gpt-5.4": { "alias": "gpt54" },
         "anthropic/claude-opus-4-6": { "alias": "opus" },
-        "anthropic/claude-sonnet-4-6": { "alias": "sonnet" },
-        "openai-codex/gpt-5.4": { "alias": "gpt54" }
+        "anthropic/claude-sonnet-4-6": { "alias": "sonnet" }
       },
       "workspace": "./agents/router",
       "repoRoot": ".",
       "bootstrapMaxChars": 23000,
       "userTimezone": "Asia/Kolkata",
-      "thinkingDefault": "medium",
+      "thinkingDefault": "xhigh",
       "timeoutSeconds": 3600,
       "typingIntervalSeconds": 5,
       "typingMode": "instant",
       "maxConcurrent": 5,
       "subagents": {
         "maxConcurrent": 3,
-        "thinking": "high"
+        "thinking": "xhigh"
       },
       "sandbox": {
         "mode": "off"
@@ -38,8 +38,8 @@
         "name": "router",
         "workspace": "./agents/router",
         "model": {
-          "primary": "anthropic/claude-opus-4-6",
-          "fallbacks": ["anthropic/claude-sonnet-4-6"]
+          "primary": "openai-codex/gpt-5.4",
+          "fallbacks": ["anthropic/claude-opus-4-6"]
         },
         "identity": {
           "name": "Router",
@@ -63,8 +63,8 @@
         "name": "builder",
         "workspace": "./agents/builder",
         "model": {
-          "primary": "anthropic/claude-opus-4-6",
-          "fallbacks": ["anthropic/claude-sonnet-4-6"]
+          "primary": "openai-codex/gpt-5.4",
+          "fallbacks": ["anthropic/claude-opus-4-6"]
         },
         "identity": {
           "name": "Builder",
@@ -85,8 +85,8 @@
         "name": "reviewer",
         "workspace": "./agents/reviewer",
         "model": {
-          "primary": "anthropic/claude-opus-4-6",
-          "fallbacks": ["anthropic/claude-sonnet-4-6"]
+          "primary": "openai-codex/gpt-5.4",
+          "fallbacks": ["anthropic/claude-opus-4-6"]
         },
         "identity": {
           "name": "Reviewer",
@@ -107,8 +107,8 @@
         "name": "infra",
         "workspace": "./agents/infra",
         "model": {
-          "primary": "anthropic/claude-opus-4-6",
-          "fallbacks": ["anthropic/claude-sonnet-4-6"]
+          "primary": "openai-codex/gpt-5.4",
+          "fallbacks": ["anthropic/claude-opus-4-6"]
         },
         "identity": {
           "name": "Infra",
