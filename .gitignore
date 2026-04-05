@@ -1,0 +1,26 @@
+# Linear API key (NEVER commit secrets)
+.linear-api-key
+skills/linear/.linear-api-key
+
+# Work packets (local state, not committed)
+shared/work/*/
+!shared/work/_TEMPLATE/
+
+# Reviews (local state)
+shared/reviews/
+
+# Node
+node_modules/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log

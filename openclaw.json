@@ -1,0 +1,169 @@
+{
+  "meta": {
+    "profile": "floq",
+    "description": "Floq product development automation — 4-agent system",
+    "version": "1.0.0"
+  },
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "anthropic/claude-opus-4-6"
+      },
+      "models": {
+        "anthropic/claude-opus-4-6": { "alias": "opus" },
+        "anthropic/claude-sonnet-4-6": { "alias": "sonnet" },
+        "openai-codex/gpt-5.4": { "alias": "gpt54" }
+      },
+      "workspace": "./agents/router",
+      "repoRoot": ".",
+      "bootstrapMaxChars": 23000,
+      "userTimezone": "Asia/Kolkata",
+      "thinkingDefault": "medium",
+      "timeoutSeconds": 3600,
+      "typingIntervalSeconds": 5,
+      "typingMode": "instant",
+      "maxConcurrent": 5,
+      "subagents": {
+        "maxConcurrent": 3,
+        "thinking": "high"
+      },
+      "sandbox": {
+        "mode": "off"
+      }
+    },
+    "list": [
+      {
+        "id": "router",
+        "default": true,
+        "name": "router",
+        "workspace": "./agents/router",
+        "model": {
+          "primary": "anthropic/claude-opus-4-6",
+          "fallbacks": ["anthropic/claude-sonnet-4-6"]
+        },
+        "identity": {
+          "name": "Router",
+          "emoji": "🚦"
+        },
+        "subagents": {
+          "allowAgents": ["builder", "reviewer", "infra"]
+        },
+        "sandbox": { "mode": "off" },
+        "tools": {
+          "profile": "coding",
+          "deny": ["gateway", "cron"],
+          "exec": {
+            "security": "full",
+            "ask": "on-miss"
+          }
+        }
+      },
+      {
+        "id": "builder",
+        "name": "builder",
+        "workspace": "./agents/builder",
+        "model": {
+          "primary": "anthropic/claude-opus-4-6",
+          "fallbacks": ["anthropic/claude-sonnet-4-6"]
+        },
+        "identity": {
+          "name": "Builder",
+          "emoji": "🛠️"
+        },
+        "subagents": { "allowAgents": [] },
+        "sandbox": { "mode": "off" },
+        "tools": {
+          "profile": "full",
+          "exec": {
+            "security": "full",
+            "ask": "off"
+          }
+        }
+      },
+      {
+        "id": "reviewer",
+        "name": "reviewer",
+        "workspace": "./agents/reviewer",
+        "model": {
+          "primary": "anthropic/claude-opus-4-6",
+          "fallbacks": ["anthropic/claude-sonnet-4-6"]
+        },
+        "identity": {
+          "name": "Reviewer",
+          "emoji": "🔬"
+        },
+        "subagents": { "allowAgents": [] },
+        "sandbox": { "mode": "off" },
+        "tools": {
+          "profile": "full",
+          "exec": {
+            "security": "full",
+            "ask": "off"
+          }
+        }
+      },
+      {
+        "id": "infra",
+        "name": "infra",
+        "workspace": "./agents/infra",
+        "model": {
+          "primary": "anthropic/claude-opus-4-6",
+          "fallbacks": ["anthropic/claude-sonnet-4-6"]
+        },
+        "identity": {
+          "name": "Infra",
+          "emoji": "🚂"
+        },
+        "subagents": { "allowAgents": [] },
+        "sandbox": { "mode": "off" },
+        "tools": {
+          "profile": "full",
+          "deny": ["gateway", "cron"],
+          "exec": {
+            "security": "full",
+            "ask": "off"
+          }
+        }
+      }
+    ]
+  },
+  "tools": {
+    "profile": "coding",
+    "sessions": {
+      "visibility": "all"
+    },
+    "agentToAgent": {
+      "enabled": true,
+      "allow": ["router", "builder", "reviewer", "infra"]
+    }
+  },
+  "session": {
+    "dmScope": "per-channel-peer",
+    "resetByType": {
+      "thread": {
+        "mode": "idle",
+        "idleMinutes": 120
+      }
+    },
+    "agentToAgent": {
+      "maxPingPongTurns": 0
+    }
+  },
+  "skills": {
+    "load": {
+      "extraDirs": ["./skills"]
+    },
+    "install": {
+      "nodeManager": "npm"
+    }
+  },
+  "messages": {
+    "responsePrefix": "auto",
+    "ackReactionScope": "all"
+  },
+  "commands": {
+    "native": "auto",
+    "nativeSkills": "auto",
+    "restart": true
+  }
+}
