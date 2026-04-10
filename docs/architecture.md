@@ -28,37 +28,366 @@
 
 ## System Overview
 
-```
-                         ┌──────────────────────────────────────────────────┐
-                         │                   FLOQ-CLAW                     │
-                         │         5-Agent Development Automation          │
-                         └──────────────────────────────────────────────────┘
-
-    ┌─────────┐       ┌──────────┐       ┌──────────┐       ┌──────────┐       ┌─────────┐
-    │ LINEAR  │◄─────►│  ROUTER  │◄─────►│  GITHUB  │       │ RAILWAY  │       │  USER   │
-    │ tickets │       │   🚦     │       │   PRs    │       │  deploy  │       │         │
-    └─────────┘       └────┬─────┘       └──────────┘       └──────────┘       └────┬────┘
-                           │                                                        │
-              ┌────────────┼────────────────────────────┐                           │
-              │            │                            │                           │
-         ┌────▼────┐  ┌────▼────┐  ┌─────────┐  ┌──────▼──┐                        │
-         │ARCHITECT│  │ BUILDER │  │REVIEWER │  │  INFRA  │                        │
-         │   🧠    │  │   🛠️    │  │   🔬    │  │   🚂    │                        │
-         │ design  │  │  code   │  │ review  │  │ deploy  │                        │
-         └────┬────┘  └────┬────┘  └────┬────┘  └────┬────┘                        │
-              │            │            │            │                              │
-              ▼            ▼            ▼            ▼                              │
-    ┌──────────────────────────────────────────────────────┐                        │
-    │              SHARED WORK PACKETS                     │◄───────────────────────┘
-    │  spec.md | tasks.md | tests.md | verify-results.md   │   (visible to user)
-    └──────────────────────────────────────────────────────┘
-```
-
-**How it works in one line:**
+### Full System Map
 
 ```
-Linear ticket → Router classifies → Architect designs → Builder implements → Builder verifies
-→ Reviewer reviews → Infra deploys + verifies → Linear updated to Done
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                              EXTERNAL SYSTEMS                                  │
+│                                                                                 │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────────┐  │
+│  │  LINEAR  │  │  GITHUB  │  │ RAILWAY  │  │ DATABASE │  │  APPLICATION     │  │
+│  │  tickets │  │  repos   │  │ services │  │ Postgres │  │  dev server      │  │
+│  │  states  │  │  PRs     │  │ deploys  │  │ Redis    │  │  localhost:3000   │  │
+│  │  comments│  │  reviews │  │  logs    │  │ schema   │  │  API endpoints   │  │
+│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────────┬─────────┘  │
+│       │              │             │              │                 │            │
+└───────┼──────────────┼─────────────┼──────────────┼─────────────────┼────────────┘
+        │              │             │              │                 │
+        │              │             │              │                 │
+┌───────┼──────────────┼─────────────┼──────────────┼─────────────────┼────────────┐
+│       │              │             │              │                 │            │
+│  ┌────▼──────────────▼─────┐  ┌────▼──────────────▼─────────────────▼─────┐      │
+│  │        ROUTER 🚦        │  │                                           │      │
+│  │                         │  │            BUILDER 🛠️                      │      │
+│  │  reads: Linear tickets  │  │                                           │      │
+│  │  writes: Linear state   │  │  reads: spec.md, tasks.md, tests.md       │      │
+│  │  writes: Linear comments│  │  writes: code → git → GitHub PR           │      │
+│  │  reads: GitHub PR status│  │                                           │      │
+│  │                         │  │  ┌─ VERIFICATION LOOP ──────────────────┐ │      │
+│  │  classifies tasks       │  │  │                                      │ │      │
+│  │  orchestrates pipeline  │  │  │  lint/typecheck ◄── project files    │ │      │
+│  │  relays responses       │  │  │       │                              │ │      │
+│  └────────┬────────────────┘  │  │  test suite ◄────── npm test / pytest│ │      │
+│           │                   │  │       │                              │ │      │
+│  ┌────────▼────────────────┐  │  │  API tests ◄──────── curl against   │ │      │
+│  │     ARCHITECT 🧠        │  │  │       │              dev server     │ │      │
+│  │                         │  │  │  DB verify ◄──────── psql queries   │ │      │
+│  │  reads: Linear tickets  │  │  │       │              schema check   │ │      │
+│  │  reads: codebase files  │  │  │       │              data round-trip│ │      │
+│  │  reads: CLAUDE.md       │  │  │  UI check ◄──────── a11y snapshot  │ │      │
+│  │  reads: repo structure  │  │  │  (blocking)          Happy DOM     │ │      │
+│  │                         │  │  │       │                              │ │      │
+│  │  writes: spec.md        │  │  │  UI visual ◄──────── Playwright    │ │      │
+│  │  writes: tasks.md       │  │  │  (background)        screenshots   │ │      │
+│  │  writes: tests.md       │  │  │       │                              │ │      │
+│  │  writes: ANALYSIS.md    │  │  │  log analysis ◄───── grep stderr   │ │      │
+│  │  writes: QUESTIONS.md   │  │  │       │              parse traces   │ │      │
+│  │                         │  │  │       ▼                              │ │      │
+│  │  posts: Linear comments │  │  │  FAIL? → fix code → re-run (max 3) │ │      │
+│  └─────────────────────────┘  │  │  PASS? → verify-results.md → PR    │ │      │
+│                               │  └──────────────────────────────────────┘ │      │
+│  ┌─────────────────────────┐  └───────────────────────────────────────────┘      │
+│  │     REVIEWER 🔬         │                                                     │
+│  │                         │  ┌───────────────────────────────────────────┐      │
+│  │  reads: spec.md         │  │          INFRA 🚂                         │      │
+│  │  reads: PR diff (gh)    │  │                                           │      │
+│  │  reads: verify-results  │  │  POST-DEPLOY VERIFICATION:                │      │
+│  │  reads: tasks.md        │  │                                           │      │
+│  │                         │  │  health ◄─────── curl <service>/health    │      │
+│  │  validates: coverage    │  │       │                                   │      │
+│  │  validates: self-fixes  │  │  smoke tests ◄── curl from tests.md      │      │
+│  │  flags: gaps            │  │       │           against live service    │      │
+│  │                         │  │  log check ◄──── railway logs --since 5m  │      │
+│  │  writes: review.md      │  │       │          grep error/exception     │      │
+│  │  writes: GitHub review  │  │       ▼                                   │      │
+│  │  posts: Linear comment  │  │  FAIL? → alert user via Router            │      │
+│  └─────────────────────────┘  │  PASS? → verify-results.md → Linear Done  │      │
+│                               └───────────────────────────────────────────┘      │
+│                                                                                  │
+│  ┌───────────────────────────────────────────────────────────────────────────┐   │
+│  │                        SHARED WORK PACKETS                                │   │
+│  │                     ./shared/work/<LINEAR-ID>/                             │   │
+│  │                                                                           │   │
+│  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌────────────────┐  │   │
+│  │  │ spec.md  │ │ tasks.md │ │ tests.md │ │status.md │ │verify-results  │  │   │
+│  │  │(Archit.) │ │(Archit.) │ │(Archit.) │ │(all)     │ │.md (Bldr/Rev/  │  │   │
+│  │  │          │ │          │ │          │ │          │ │     Infra)     │  │   │
+│  │  └──────────┘ └──────────┘ └──────────┘ └──────────┘ └────────────────┘  │   │
+│  │                                                       ┌──────────┐       │   │
+│  │                                                       │review.md │       │   │
+│  │                                                       │(Reviewer)│       │   │
+│  │                                                       └──────────┘       │   │
+│  └───────────────────────────────────────────────────────────────────────────┘   │
+│                                                                                  │
+│  ┌───────────────────────────────────────────────────────────────────────────┐   │
+│  │                     ARCHITECT NOTES (persistent)                           │   │
+│  │                  ./architect/notes/<TICKET_ID>/                            │   │
+│  │                                                                           │   │
+│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐                    │   │
+│  │  │ ANALYSIS.md  │  │ QUESTIONS.md │  │ TECH_SPEC.md │                    │   │
+│  │  │ code traces  │  │ open/answered│  │ working draft│                    │   │
+│  │  │ dependencies │  │ with context │  │ before final │                    │   │
+│  │  └──────────────┘  └──────────────┘  └──────────────┘                    │   │
+│  └───────────────────────────────────────────────────────────────────────────┘   │
+│                                                                                  │
+│  ┌───────────────────────────────────────────────────────────────────────────┐   │
+│  │                      ACTIVE WORK QUEUE                                    │   │
+│  │                      ./shared/active.md                                   │   │
+│  │                                                                           │   │
+│  │  Work ID  │ Owner     │ State          │ Branch / PR Links                │   │
+│  │  FLOQ-42  │ architect │ grooming       │ pending                          │   │
+│  │  FLOQ-38  │ builder   │ in_progress    │ builder/FLOQ-38-... / PR #12     │   │
+│  │  FLOQ-35  │ reviewer  │ review_pending │ PR #10                           │   │
+│  └───────────────────────────────────────────────────────────────────────────┘   │
+│                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────┘
+                                    FLOQ-CLAW
+```
+
+### End-to-End Flow (BIG Pipeline)
+
+```
+USER ──► "Implement rate limiting for the API"
+           │
+           ▼
+┌─────── ROUTER 🚦 ──────────────────────────────────────────────────────────────┐
+│  1. Fetch Linear ticket                                                         │
+│  2. Classify: Bounded scope + Uncertain ambiguity + High risk = BIG             │
+│  3. Create work folder: ./shared/work/FLOQ-42/                                  │
+│  4. Post Linear comment: "🧠 Technical grooming initiated"                       │
+└────────────┬────────────────────────────────────────────────────────────────────┘
+             │ sessions_send (thinking: xhigh, timeout: 3600)
+             ▼
+┌─────── ARCHITECT 🧠 ───────────────────────────────────────────────────────────┐
+│  1. Read Linear ticket details (linear.sh get FLOQ-42)                          │
+│  2. Read codebase: CLAUDE.md, route files, service layers, DB schemas           │
+│  3. Trace code paths: controllers → services → repositories → models            │
+│  4. Map dependencies: which services call this? shared DB tables?               │
+│  5. Identify risks: rate limit storage, concurrent access, cache invalidation   │
+│  6. Write ANALYSIS.md to architect/notes/FLOQ-42/                               │
+│  7. Run 7-point readiness checklist — all pass                                  │
+│  8. Write spec.md + tasks.md + tests.md to shared/work/FLOQ-42/                │
+│  9. Post Linear comment: "Tech spec ready"                                      │
+│  10. Return: GROOM_RESULT: READY                                                │
+└────────────┬────────────────────────────────────────────────────────────────────┘
+             │
+             ▼
+┌─────── ROUTER 🚦 ──────────────────────────────────────────────────────────────┐
+│  Post Linear: "Spec ready. Starting implementation."                             │
+│  Update Linear state → "In Progress"                                             │
+└────────────┬────────────────────────────────────────────────────────────────────┘
+             │ sessions_send (thinking: xhigh, timeout: 3600)
+             ▼
+┌─────── BUILDER 🛠️ ─────────────────────────────────────────────────────────────┐
+│                                                                                  │
+│  IMPLEMENT                                                                       │
+│  1. Read spec.md → understand scope, approach, acceptance criteria                │
+│  2. Read tasks.md → follow task order                                            │
+│  3. git checkout -b builder/FLOQ-42-rate-limiting                                │
+│  4. Write code: middleware, Redis store, config, tests                            │
+│  5. Mark tasks complete in tasks.md as I go                                      │
+│                                                                                  │
+│  VERIFY (self-correction loop, max 3 attempts)                                   │
+│  ┌────────────────────────────────────────────────────────────────────────────┐   │
+│  │                                                                            │   │
+│  │  ┌─ LINT ──────────────────────────────────────────────────────────────┐   │   │
+│  │  │ $ npm run lint                                                      │   │   │
+│  │  │ $ npx tsc --noEmit                                                  │   │   │
+│  │  │ Result: PASS ✓                                                      │   │   │
+│  │  └─────────────────────────────────────────────────────────────────────┘   │   │
+│  │                                                                            │   │
+│  │  ┌─ TEST SUITE ────────────────────────────────────────────────────────┐   │   │
+│  │  │ $ npm test                                                          │   │   │
+│  │  │ 14 passed, 0 failed ✓                                              │   │   │
+│  │  │                                                                     │   │   │
+│  │  │ If FAIL: read error → trace to source → fix → re-run               │   │   │
+│  │  └─────────────────────────────────────────────────────────────────────┘   │   │
+│  │                                                                            │   │
+│  │  ┌─ API TESTS (curl against localhost) ────────────────────────────────┐   │   │
+│  │  │ $ npm run dev &   ← start dev server                               │   │   │
+│  │  │ $ curl -s POST localhost:3000/api/users -d '...'                    │   │   │
+│  │  │   Expected: 200  Actual: 200 ✓                                     │   │   │
+│  │  │ $ curl -s POST localhost:3000/api/users -d '...'  (rapid fire)     │   │   │
+│  │  │   Expected: 429  Actual: 429 ✓  (rate limit works)                 │   │   │
+│  │  │ $ kill %1         ← stop dev server                                │   │   │
+│  │  └─────────────────────────────────────────────────────────────────────┘   │   │
+│  │                                                                            │   │
+│  │  ┌─ DB VERIFICATION ──────────────────────────────────────────────────┐   │   │
+│  │  │ $ npx prisma migrate deploy                                        │   │   │
+│  │  │   Migration applied ✓                                              │   │   │
+│  │  │ $ psql -c "SELECT column_name, data_type                           │   │   │
+│  │  │            FROM information_schema.columns                         │   │   │
+│  │  │            WHERE table_name = 'rate_limits'"                       │   │   │
+│  │  │   ip_address | varchar, window_start | timestamp,                  │   │   │
+│  │  │   request_count | integer ✓                                        │   │   │
+│  │  │ $ psql -c "INSERT INTO rate_limits (...) VALUES (...)"             │   │   │
+│  │  │ $ psql -c "SELECT * FROM rate_limits WHERE ..."                    │   │   │
+│  │  │ $ psql -c "DELETE FROM rate_limits WHERE ..."                      │   │   │
+│  │  │   Round-trip: PASS ✓                                               │   │   │
+│  │  └─────────────────────────────────────────────────────────────────────┘   │   │
+│  │                                                                            │   │
+│  │  ┌─ UI CHECK (blocking — fast) ───────────────────────────────────────┐   │   │
+│  │  │ Tier 1: $ npx vitest run --environment happy-dom                   │   │   │
+│  │  │         Component tests: 3 passed ✓  (~42ms)                       │   │   │
+│  │  │ Tier 2: Playwright a11y snapshot of /dashboard                     │   │   │
+│  │  │         Rate limit indicator present ✓  (<1s)                      │   │   │
+│  │  └─────────────────────────────────────────────────────────────────────┘   │   │
+│  │                                                                            │   │
+│  │  ┌─ UI VISUAL (background — slow, don't wait) ────────────────────────┐   │   │
+│  │  │ $ npx playwright test --reporter=json &                             │   │   │
+│  │  │   Running in background... Builder continues to PR                  │   │   │
+│  │  │   Results → verify-results.md (PASS or ASYNC_FAIL)                 │   │   │
+│  │  └─────────────────────────────────────────────────────────────────────┘   │   │
+│  │                                                                            │   │
+│  │  ┌─ LOG ANALYSIS ─────────────────────────────────────────────────────┐   │   │
+│  │  │ $ npm run dev 2>&1 | tee /tmp/app.log &                            │   │   │
+│  │  │   ... run API tests ...                                             │   │   │
+│  │  │ $ grep -i "error\|exception\|fatal" /tmp/app.log                   │   │   │
+│  │  │   No errors found ✓                                                │   │   │
+│  │  │                                                                     │   │   │
+│  │  │ If errors found:                                                    │   │   │
+│  │  │   read stack trace → identify root cause → fix → re-run            │   │   │
+│  │  └─────────────────────────────────────────────────────────────────────┘   │   │
+│  │                                                                            │   │
+│  └────────────────────────────────────────────────────────────────────────────┘   │
+│                                                                                  │
+│  6. Write all results to verify-results.md                                       │
+│  7. git push → gh pr create                                                      │
+│  8. Post Linear: "🔗 PR created: github.com/.../pull/42"                          │
+│  9. Return: PR URL + verification summary                                        │
+└────────────┬────────────────────────────────────────────────────────────────────┘
+             │
+             ▼
+┌─────── ROUTER 🚦 ──────────────────────────────────────────────────────────────┐
+│  Post Linear: "Implementation complete. Sending to review."                      │
+└────────────┬────────────────────────────────────────────────────────────────────┘
+             │ sessions_send (thinking: xhigh, timeout: 1800)
+             ▼
+┌─────── REVIEWER 🔬 ────────────────────────────────────────────────────────────┐
+│                                                                                  │
+│  STATIC CODE REVIEW                                                              │
+│  1. Read spec.md → acceptance criteria                                           │
+│  2. Fetch PR diff: gh pr diff <url>                                              │
+│  3. Read surrounding source files for context                                    │
+│  4. Run review checklist:                                                        │
+│     ├── Correctness: Does code match spec? Edge cases? DB transactions?          │
+│     ├── Security: SQL injection? XSS? Auth? Credentials?                         │
+│     ├── Performance: N+1? Indexes? Unbounded loops? Pagination?                  │
+│     ├── Maintainability: Follows patterns? No dead code? Clear naming?           │
+│     └── Testing: Tests exist? Cover edge cases? Not fragile?                     │
+│                                                                                  │
+│  VERIFICATION ASSESSMENT                                                         │
+│  5. Read verify-results.md                                                       │
+│     ├── Did Builder run lint? ✓                                                  │
+│     ├── Did Builder run tests? ✓ (14 passed)                                     │
+│     ├── API change → API tests present? ✓ (rate limit 429 verified)              │
+│     ├── DB migration → schema verified? ✓                                        │
+│     ├── UI change → UI check done? ✓ (a11y + component)                          │
+│     └── Self-correction needed? No — first attempt passed                        │
+│                                                                                  │
+│  6. Write review.md (Verdict: PASS / WARN / FAIL)                                │
+│  7. Post GitHub review: gh pr review --approve                                   │
+│  8. Post Linear: "✅ Code review: PASS"                                           │
+│                                                                                  │
+│  If FAIL → Router sends findings to Builder → Builder fixes → re-review (max 3)  │
+└────────────┬────────────────────────────────────────────────────────────────────┘
+             │
+             ▼
+┌─────── ROUTER 🚦 ──────────────────────────────────────────────────────────────┐
+│  Review PASS → Merge PR                                                          │
+│  Post Linear: "PR merged. Triggering deploy verification."                       │
+└────────────┬────────────────────────────────────────────────────────────────────┘
+             │ sessions_send (thinking: high, timeout: 1800)
+             ▼
+┌─────── INFRA 🚂 ───────────────────────────────────────────────────────────────┐
+│                                                                                  │
+│  POST-DEPLOY VERIFICATION                                                        │
+│  ┌────────────────────────────────────────────────────────────────────────────┐   │
+│  │                                                                            │   │
+│  │  ┌─ DEPLOYMENT STATUS ────────────────────────────────────────────────┐   │   │
+│  │  │ $ railway deployments list                                          │   │   │
+│  │  │   Latest: deploy-abc123  Status: SUCCESS ✓                         │   │   │
+│  │  │ $ railway service info api-service                                  │   │   │
+│  │  │   Status: RUNNING  Replicas: 2/2 ✓                                 │   │   │
+│  │  └─────────────────────────────────────────────────────────────────────┘   │   │
+│  │                                                                            │   │
+│  │  ┌─ HEALTH ENDPOINT ─────────────────────────────────────────────────┐   │   │
+│  │  │ $ curl -sf https://api.floq.app/health                             │   │   │
+│  │  │   200 OK ✓                                                         │   │   │
+│  │  └─────────────────────────────────────────────────────────────────────┘   │   │
+│  │                                                                            │   │
+│  │  ┌─ SMOKE TESTS (from tests.md, against live service) ────────────────┐   │   │
+│  │  │ $ curl -s POST https://api.floq.app/api/users -d '...'             │   │   │
+│  │  │   Expected: 200  Actual: 200 ✓                                     │   │   │
+│  │  │ $ curl -s POST https://api.floq.app/api/users -d '...' (x20)      │   │   │
+│  │  │   Expected: 429  Actual: 429 ✓  (rate limit works in prod)         │   │   │
+│  │  └─────────────────────────────────────────────────────────────────────┘   │   │
+│  │                                                                            │   │
+│  │  ┌─ PRODUCTION LOG CHECK ─────────────────────────────────────────────┐   │   │
+│  │  │ $ railway logs api-service --since 5m                               │   │   │
+│  │  │ $ grep -i "error\|exception\|fatal"                                │   │   │
+│  │  │   No errors in last 5 minutes ✓                                    │   │   │
+│  │  └─────────────────────────────────────────────────────────────────────┘   │   │
+│  │                                                                            │   │
+│  └────────────────────────────────────────────────────────────────────────────┘   │
+│                                                                                  │
+│  Append post-deploy results to verify-results.md                                 │
+│  Return: DEPLOY_VERIFY: PASS                                                     │
+└────────────┬────────────────────────────────────────────────────────────────────┘
+             │
+             ▼
+┌─────── ROUTER 🚦 ──────────────────────────────────────────────────────────────┐
+│  Update Linear state → "Done"                                                    │
+│  Post Linear: "🏁 Deployment verified. All smoke tests passed."                  │
+│  Relay full results to User                                                      │
+└─────────────────────────────────────────────────────────────────────────────────┘
+             │
+             ▼
+USER ◄── "Rate limiting implemented, verified, reviewed, deployed, and confirmed."
+```
+
+### What Each Agent Can See and Access
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                      AGENT ACCESS MAP                                       │
+├──────────────┬──────────┬──────────┬──────────┬──────────┬──────────────────┤
+│   Resource   │ Router 🚦│Archit. 🧠│Builder 🛠️│Review 🔬│   Infra 🚂       │
+├──────────────┼──────────┼──────────┼──────────┼──────────┼──────────────────┤
+│ Linear API   │  read    │  read    │  comment │  comment │   comment        │
+│              │  write   │  write   │          │          │                  │
+│              │  create  │  search  │          │          │                  │
+├──────────────┼──────────┼──────────┼──────────┼──────────┼──────────────────┤
+│ GitHub       │  PR view │    —     │  PR      │  PR view │     —            │
+│              │          │          │  create  │  review  │                  │
+│              │          │          │  push    │  approve │                  │
+├──────────────┼──────────┼──────────┼──────────┼──────────┼──────────────────┤
+│ Codebase     │    —     │  read    │  read    │  read    │     —            │
+│              │          │  grep    │  write   │  (diff)  │                  │
+│              │          │  trace   │  edit    │          │                  │
+├──────────────┼──────────┼──────────┼──────────┼──────────┼──────────────────┤
+│ Dev Server   │    —     │    —     │  start   │    —     │     —            │
+│ (localhost)  │          │          │  stop    │          │                  │
+│              │          │          │  curl    │          │                  │
+├──────────────┼──────────┼──────────┼──────────┼──────────┼──────────────────┤
+│ Database     │    —     │  read    │  migrate │    —     │   connect        │
+│ (Postgres,   │          │  schema  │  query   │          │   status         │
+│  Redis)      │          │  inspect │  verify  │          │                  │
+├──────────────┼──────────┼──────────┼──────────┼──────────┼──────────────────┤
+│ Test Suite   │    —     │    —     │  run     │  read    │     —            │
+│              │          │          │  parse   │  results │                  │
+│              │          │          │  fix     │          │                  │
+├──────────────┼──────────┼──────────┼──────────┼──────────┼──────────────────┤
+│ App Logs     │    —     │    —     │  capture │    —     │   railway logs   │
+│              │          │          │  grep    │          │   query          │
+│              │          │          │  parse   │          │   grep           │
+├──────────────┼──────────┼──────────┼──────────┼──────────┼──────────────────┤
+│ Browser      │    —     │    —     │  a11y    │    —     │     —            │
+│ (Playwright) │          │          │  snapshot│          │                  │
+│              │          │          │  screensht│         │                  │
+├──────────────┼──────────┼──────────┼──────────┼──────────┼──────────────────┤
+│ Railway      │    —     │    —     │    —     │    —     │   deploy         │
+│              │          │          │          │          │   logs           │
+│              │          │          │          │          │   rollback       │
+│              │          │          │          │          │   env vars       │
+│              │          │          │          │          │   health check   │
+├──────────────┼──────────┼──────────┼──────────┼──────────┼──────────────────┤
+│ Work Packets │  create  │  write   │  write   │  write   │   write          │
+│              │  read    │  read    │  read    │  read    │   read           │
+├──────────────┼──────────┼──────────┼──────────┼──────────┼──────────────────┤
+│ Architect    │    —     │  write   │    —     │    —     │     —            │
+│ Notes        │          │  read    │          │          │                  │
+└──────────────┴──────────┴──────────┴──────────┴──────────┴──────────────────┘
 ```
 
 ---
