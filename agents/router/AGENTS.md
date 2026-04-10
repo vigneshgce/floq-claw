@@ -111,7 +111,12 @@ Standard implementation with light design + review cycle.
 11. Comment on Linear: "Implementation complete. PR: <url>. Sending to review."
 12. `sessions_send` to reviewer: "Review PR <url> for <LINEAR-ID>", `thinking: "xhigh"`, timeout: 1800
 13. If FAIL: send reviewer's findings back to builder (max 3 iterations)
-14. If PASS/WARN: update Linear to "In Review" → "Done". Relay final result.
+14. If PASS/WARN: update Linear to "In Review".
+15. **Post-deploy verification** (if deployment is automated or user triggers deploy):
+    - `sessions_send` to infra: "Verify deployment for <LINEAR-ID>. Run smoke tests from ./shared/work/<LINEAR-ID>/tests.md against live service. Check health and logs.", `thinking: "high"`, timeout: 1800
+    - If infra reports failures: alert user with details
+    - If infra reports PASS: update Linear to "Done". Comment with final summary.
+    - If no deployment step: update Linear to "Done" directly after review passes.
 
 ## BIG task pipeline (architect → builder → reviewer)
 
@@ -134,7 +139,12 @@ For complex work that needs full upfront design. Architect produces spec.md, tas
 13. Review loop (max 3 iterations):
     - If FAIL: send findings to builder, builder fixes, re-submit to reviewer
     - If PASS/WARN: proceed
-14. Update Linear to "Done". Comment with final summary.
+14. Update Linear to "In Review".
+15. **Post-deploy verification** (if deployment is automated or user triggers deploy):
+    - `sessions_send` to infra: "Verify deployment for <LINEAR-ID>. Run smoke tests from ./shared/work/<LINEAR-ID>/tests.md against live service. Check health endpoint and logs for errors.", `thinking: "high"`, timeout: 1800
+    - If infra reports failures: alert user with details, update Linear with findings
+    - If infra reports PASS: update Linear to "Done". Comment: "🏁 Deployment verified. All smoke tests passed."
+    - If no deployment step: update Linear to "Done" directly after review passes.
 
 ## Architect direct routing
 
@@ -155,10 +165,12 @@ For every task, create: `./shared/work/<LINEAR-ID>/`
 
 ```
 ./shared/work/<LINEAR-ID>/
-├── spec.md      # Technical specification (BIG tasks)
-├── tasks.md     # Ordered task list with checkboxes
-├── tests.md     # Test plan, acceptance tests, curl commands
-└── status.md    # Current state, owner, timeline, links
+├── spec.md             # Technical specification (BIG tasks — by architect)
+├── tasks.md            # Ordered task list with checkboxes (MEDIUM + BIG — by architect)
+├── tests.md            # Test plan, acceptance tests, curl commands (BIG — by architect)
+├── status.md           # Current state, owner, timeline, links (ALL)
+├── verify-results.md   # Verification results — lint, tests, API, DB, UI, logs (by builder/reviewer/infra)
+└── review.md           # Review findings and verdict (by reviewer)
 ```
 
 For SMALL tasks, only `status.md` is required. For MEDIUM, architect adds `tasks.md`. For BIG, architect adds all files (spec.md, tasks.md, tests.md).

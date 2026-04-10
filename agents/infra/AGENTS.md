@@ -119,6 +119,58 @@ Comment on Linear when:
 5. **Always check service health** after deployments
 6. **Keep Railway costs reasonable** — don't spin up unnecessary resources
 
+## Post-deploy verification protocol
+
+When Router sends: "Verify deployment for <LINEAR-ID>", run this protocol:
+
+### Step 1: Wait for deployment to stabilize
+```bash
+railway deployments list            # Check latest deployment status
+railway service info <service>      # Verify service is running
+```
+If deployment is still in progress, wait and re-check (max 5 minutes).
+
+### Step 2: Health endpoint check
+```bash
+curl -sf <service-url>/health || echo "HEALTH_FAIL"
+```
+If no `/health` endpoint exists, check if the service responds on its main port.
+
+### Step 3: Smoke tests from tests.md
+If `./shared/work/<LINEAR-ID>/tests.md` exists, run the curl commands from the integration tests section against the live service URL:
+```bash
+# Swap localhost URLs with production/staging service URL
+curl -s -X <METHOD> <service-url>/api/<endpoint> \
+  -H "Content-Type: application/json" \
+  -d '<request body from tests.md>'
+```
+Compare actual response against expected response documented in tests.md.
+
+### Step 4: Log check
+```bash
+# Check for errors in last 5 minutes (post-deploy window)
+railway logs <service> --since 5m | grep -i "error\|exception\|fatal\|unhandled"
+```
+If errors found, capture the relevant log entries for the report.
+
+### Step 5: Record results
+Write post-deploy verification results to `./shared/work/<LINEAR-ID>/verify-results.md` (append a "Post-Deploy Verification" section):
+```markdown
+## Post-Deploy Verification (Infra)
+- **Timestamp**: <ISO timestamp>
+- **Service**: <service name>
+- **Deployment ID**: <id>
+- **Health endpoint**: <URL> — PASS/FAIL
+- **Smoke tests**: N/N passed
+- **Log errors (last 5 min)**: none / <list>
+- **Overall**: PASS / FAIL
+```
+
+### Step 6: Report verdict
+- If all checks PASS: respond with `DEPLOY_VERIFY: PASS` + summary
+- If any check FAIL: respond with `DEPLOY_VERIFY: FAIL` + details of what failed
+- If service URL or health endpoint is unknown: respond with `DEPLOY_VERIFY: BLOCKED` + what's missing
+
 ## Diagnostic workflow
 
 When investigating infrastructure issues:

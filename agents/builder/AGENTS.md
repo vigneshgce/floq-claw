@@ -121,13 +121,184 @@ If `./shared/work/<LINEAR-ID>/tasks.md` exists:
    c. Run tests defined in `tests.md`
    d. Comment on Linear with results
 
-## tests.md execution
+## Verification phase (MANDATORY before PR)
 
-If `./shared/work/<LINEAR-ID>/tests.md` exists:
-1. After implementation, run each test defined in the file
-2. Record pass/fail results
-3. If failures: fix and re-run before creating PR
-4. Include test results in PR body
+After implementation and before creating a PR, you MUST run a verification loop. This is how you see your own output, catch issues, and self-correct.
+
+### Verification loop (max 3 attempts)
+
+```
+Implement → Verify → If failures: fix → re-verify → If still failing: fix → re-verify → PR
+```
+
+If all 3 attempts fail, create the PR anyway but document all failures in `verify-results.md`. Do NOT silently skip verification.
+
+### Step 1: Lint / Typecheck
+
+Run the project's linter and type checker. Catches syntax errors, import issues, type mismatches.
+
+```bash
+# JavaScript/TypeScript
+npm run lint          # or: npx eslint .
+npx tsc --noEmit      # typecheck only
+
+# Python
+ruff check . --fix    # or: flake8
+mypy .                # typecheck
+
+# Go
+go vet ./...
+golangci-lint run
+```
+
+If the project has a specific lint command in `package.json` or `Makefile`, use that.
+
+### Step 2: Run test suite
+
+Run the full test suite. This is the most important verification signal.
+
+```bash
+# JavaScript/TypeScript
+npm test
+
+# Python
+pytest -q
+
+# Go
+go test ./...
+
+# Java (Docker if no local JDK)
+docker run --rm -v "$PWD":/app -w /app eclipse-temurin:17-jdk ./gradlew test
+```
+
+Parse the output. If tests fail:
+1. Read the failure message and stack trace
+2. Identify the root cause
+3. Fix the code
+4. Re-run tests
+5. Repeat until passing or max attempts reached
+
+### Step 3: API verification (if applicable)
+
+If `tests.md` defines API tests (curl commands), execute them against a local dev server.
+
+```bash
+# Start dev server in background
+npm run dev &
+DEV_PID=$!
+sleep 5  # wait for startup
+
+# Run each curl test from tests.md
+curl -sf http://localhost:3000/health || echo "HEALTH_FAIL"
+curl -s -X POST http://localhost:3000/api/<endpoint> \
+  -H "Content-Type: application/json" \
+  -d '<request body from tests.md>' | jq .
+
+# Compare response against expected from tests.md
+# Record actual status code and response body
+
+# Stop dev server
+kill $DEV_PID
+```
+
+If starting a dev server is not possible (missing dependencies, env vars), document the blocker in `verify-results.md` and proceed.
+
+### Step 4: DB verification (if migrations exist)
+
+If your changes include database migrations or schema changes:
+
+```bash
+# Run migration
+npx prisma migrate deploy  # or: knex migrate:latest, alembic upgrade head
+
+# Verify schema matches expectations
+psql -c "SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_name = '<table>'"
+
+# Verify constraints
+psql -c "SELECT constraint_name, constraint_type FROM information_schema.table_constraints WHERE table_name = '<table>'"
+
+# Test data round-trip
+psql -c "INSERT INTO <table> (...) VALUES (...) RETURNING id"
+psql -c "SELECT * FROM <table> WHERE id = <id>"
+psql -c "DELETE FROM <table> WHERE id = <id>"
+```
+
+If the database is not available locally, document the blocker.
+
+### Step 5: UI verification (if frontend changes)
+
+If your changes affect the UI:
+
+**Option A: DOM snapshot (preferred — lightweight)**
+```bash
+node -e "
+  const { chromium } = require('playwright');
+  (async () => {
+    const browser = await chromium.launch();
+    const page = await browser.newPage();
+    await page.goto('http://localhost:3000/<path>');
+    const snapshot = await page.accessibility.snapshot();
+    console.log(JSON.stringify(snapshot, null, 2));
+    await browser.close();
+  })();
+"
+```
+
+Read the accessibility tree. Check that expected elements, text, and structure are present per the spec.
+
+**Option B: Screenshot (for visual features)**
+```bash
+node -e "
+  const { chromium } = require('playwright');
+  (async () => {
+    const browser = await chromium.launch();
+    const page = await browser.newPage();
+    await page.goto('http://localhost:3000/<path>');
+    await page.screenshot({ path: './shared/work/<LINEAR-ID>/verify-ui.png', fullPage: true });
+    await browser.close();
+  })();
+"
+```
+
+Read the screenshot and assess whether it matches spec expectations.
+
+If Playwright is not available, document the blocker.
+
+### Step 6: Log analysis
+
+Capture and read application logs during verification:
+
+```bash
+# During local dev server run, capture logs
+npm run dev 2>&1 | tee /tmp/app.log &
+# ... run tests ...
+kill %1
+
+# Check for errors
+grep -i "error\|exception\|fatal\|unhandled" /tmp/app.log
+```
+
+If any errors are found:
+1. Read the error context (stack trace, request details)
+2. Identify if it's related to your changes
+3. Fix the code if it is
+4. Re-run and re-check
+
+### Step 7: Record results
+
+Write all verification results to `./shared/work/<LINEAR-ID>/verify-results.md`:
+- What was run, what passed, what failed
+- Any self-correction attempts (what failed → what was fixed → re-run result)
+- Any blockers (tools not available, server won't start, etc.)
+- Overall verdict: PASS or FAIL
+
+### What to do when verification tools are unavailable
+
+If lint/test/dev-server toolchain is not available in the current runtime:
+1. Document exactly what's missing in verify-results.md Blockers section
+2. Run whatever IS available (syntax checks, static analysis, etc.)
+3. Include clear instructions in the PR for manual verification
+4. Do NOT skip the verification phase entirely — always record what was attempted
 
 ## Code quality rules
 

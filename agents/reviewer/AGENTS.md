@@ -105,6 +105,55 @@ Steps:
 - [ ] Environment variables documented?
 - [ ] Deployment considerations noted?
 
+## Independent verification (before verdict)
+
+After static code review, run independent verification when toolchain is available. This catches "works on my machine" issues.
+
+### Verification steps
+
+1. **Check out builder's branch**:
+   ```bash
+   git fetch origin
+   git checkout <builder-branch>
+   ```
+
+2. **Re-run test suite**:
+   ```bash
+   npm test  # or: pytest, go test, gradlew test (via Docker if needed)
+   ```
+   Compare results against builder's `./shared/work/<LINEAR-ID>/verify-results.md`.
+
+3. **Run API tests from tests.md** (if dev server can be started):
+   ```bash
+   npm run dev &
+   sleep 5
+   # Execute curl commands from tests.md
+   kill %1
+   ```
+
+4. **Check verify-results.md**:
+   - Read builder's verification results
+   - Verify the claimed results match independent re-execution
+   - Flag any discrepancies
+
+5. **Record verification evidence in review.md**:
+   ```markdown
+   ## Verification Evidence
+   - **Tests re-executed**: Yes/No (if no, why)
+   - **Test result**: <N passed, N failed>
+   - **API tests**: <N/N passed>
+   - **Command used**: `<exact command>`
+   - **Discrepancies from builder**: <none | details>
+   ```
+
+### When verification tools are unavailable
+
+If the test toolchain is not available in the current runtime:
+1. Document the blocker (e.g., "Go toolchain unavailable", "JAVA_HOME not set")
+2. Rely on static code review + builder's verify-results.md
+3. Note in review.md: "Verification evidence limited to code inspection and builder's recorded results"
+4. Flag this as a WARNING (not blocking) if builder's verify-results.md shows PASS
+
 ## Verdict format
 
 ```markdown

@@ -82,9 +82,15 @@ User → Router → Architect → Router → Builder → Router → Reviewer →
 
 Architect does **light grooming**: reads ticket + relevant code, produces `tasks.md` with ordered implementation steps.
 
+Builder runs **build-time verification** (lint + test + API checks) before creating PR. Self-corrects from failures (max 3 attempts).
+
+Reviewer runs **independent verification** (re-runs tests) during code review.
+
 If reviewer returns FAIL: `Router → Builder (fix) → Router → Reviewer (re-review)` (max 3 iterations)
 
-Files created: `status.md`, `tasks.md` (by architect), `review.md` (by reviewer)
+After review PASS, Router can optionally trigger **post-deploy verification** via Infra (health + smoke tests + log check).
+
+Files created: `status.md`, `tasks.md` (by architect), `verify-results.md` (by builder/reviewer/infra), `review.md` (by reviewer)
 
 #### BIG (architect → builder → reviewer)
 **When**: Complex work, uncertain approach, wide scope, high risk
@@ -104,12 +110,20 @@ User → Router → Architect ──→ [spec.md, tasks.md, tests.md]
                   │       ├──→ GitHub PR review
                   │       └──→ Linear (review verdict)
                   │
-                  └──→ [Review loop: max 3 iterations]
+                  ├──→ [Review loop: max 3 iterations]
+                  │
+                  └──→ Infra (post-deploy verification: health + smoke + logs)
 ```
 
 Architect does **full grooming**: 6-step codebase analysis, 7-point readiness checklist, produces all three artifacts. May ask structured questions before reaching READY state.
 
-Files created: `spec.md`, `tasks.md`, `tests.md` (by architect), `status.md`, `review.md` (by reviewer)
+Builder runs **full verification** (lint + test + API + DB + UI if applicable) before PR. Self-corrects (max 3 attempts).
+
+Reviewer runs **independent verification** during review.
+
+After merge + deploy, Infra runs **post-deploy verification** (health + smoke tests from tests.md + log check).
+
+Files created: `spec.md`, `tasks.md`, `tests.md` (by architect), `status.md`, `verify-results.md` (by builder/reviewer/infra), `review.md` (by reviewer)
 
 ## Architect: Design-First Development
 
@@ -152,6 +166,88 @@ All 7 criteria must pass before architect marks READY:
 6. Documented risks with mitigations
 7. Specified contracts (API/schema/events)
 
+## Verification Architecture: Build → Run → See → Fix
+
+Agents don't just build features — they verify them at runtime, see the output, and self-correct. This creates a feedback loop at every stage.
+
+### 3-Layer Verification
+
+| Layer | Owner | When | What | Feedback Loop |
+|-------|-------|------|------|---------------|
+| **Build-time** | Builder | After implementation, before PR | Lint, tests, API checks, DB verification, UI checks, log analysis | Parse failures → fix code → re-run (max 3 attempts) |
+| **Review-time** | Reviewer | During PR review | Independent test re-execution, verify builder's results | Discrepancies flagged in review.md |
+| **Post-deploy** | Infra | After merge + deployment | Health check, smoke tests, production log check | Failures trigger alert to user via Router |
+
+### Verification Flow (BIG pipeline)
+
+```
+Builder implements
+  │
+  ├─→ Lint/Typecheck ─→ Failures? ─→ Fix → Re-lint
+  ├─→ Test suite ────→ Failures? ─→ Fix → Re-test
+  ├─→ API tests (curl against dev server) ─→ Wrong response? ─→ Fix → Re-test
+  ├─→ DB verification (migrations, schema, data round-trip) ─→ Mismatch? ─→ Fix
+  ├─→ UI verification (DOM snapshot or screenshot) ─→ Wrong state? ─→ Fix
+  └─→ Log analysis (parse errors from dev server) ─→ Errors? ─→ Fix
+  │
+  ▼
+Write verify-results.md → Create PR
+  │
+  ▼
+Reviewer checks out branch
+  ├─→ Re-run tests independently
+  ├─→ Compare against builder's verify-results.md
+  └─→ Record verification evidence in review.md
+  │
+  ▼
+Merge → Deploy
+  │
+  ▼
+Infra post-deploy verification
+  ├─→ Health endpoint check
+  ├─→ Smoke tests (read-only subset of tests.md against production)
+  └─→ Log check (errors in last 5 minutes)
+  │
+  ▼
+Results → verify-results.md → Linear "Done"
+```
+
+### Verification Artifact: verify-results.md
+
+Every work packet gets a `verify-results.md` that records:
+- What was verified (lint, tests, API, DB, UI, logs)
+- Exact commands run and their output
+- Self-correction attempts (failure → fix → re-run)
+- Blockers (tools unavailable, server won't start)
+- Overall verdict (PASS/FAIL)
+
+This file is cumulative — Builder writes build-time results, Reviewer appends review-time results, Infra appends post-deploy results.
+
+### UI Verification Approaches
+
+| Approach | How | When to Use |
+|----------|-----|-------------|
+| **DOM/Accessibility snapshot** | Playwright captures accessibility tree as JSON text | Default for any UI change — lightweight, deterministic |
+| **Screenshot + Vision** | Playwright takes screenshot, vision model analyzes | Critical UI features where visual correctness matters |
+
+### Self-Correction Loop
+
+```
+Attempt 1: Run verification
+  → If PASS: proceed to PR
+  → If FAIL: parse error, identify root cause, fix code
+
+Attempt 2: Re-run verification
+  → If PASS: proceed to PR
+  → If FAIL: parse error, fix code
+
+Attempt 3: Final attempt
+  → If PASS: proceed to PR
+  → If FAIL: create PR anyway, document all failures in verify-results.md
+```
+
+Max 3 attempts prevents infinite loops. If builder can't self-correct after 3 tries, the failures are visible in verify-results.md for reviewer and user to see.
+
 ## Context Preservation (Zero Loss Between Agents)
 
 All context passes through **shared work packet files** — never through message summaries alone.
@@ -160,9 +256,11 @@ All context passes through **shared work packet files** — never through messag
 |---------|---------------|-----------------|
 | Router → Architect | Linear ticket + work folder path | Problem statement, requirements, discussion |
 | Architect → Builder | `spec.md` + `tasks.md` + `tests.md` | Full design, acceptance criteria, task order |
-| Builder → Reviewer | `spec.md` in folder + PR URL in `status.md` | Spec for acceptance criteria, PR for diff |
-| Reviewer → Builder (fix) | `review.md` in shared folder | Blocking issues, specific file/line refs |
+| Builder → Reviewer | `spec.md` + `verify-results.md` + PR URL in `status.md` | Spec for criteria, verification evidence, PR for diff |
+| Reviewer → Builder (fix) | `review.md` in shared folder | Blocking issues, verification discrepancies, specific file/line refs |
+| Router → Infra (post-deploy) | `tests.md` (smoke tests section) + `status.md` | What to verify against live service |
 | Any agent → Any agent | `status.md` | Current state, owner, timeline, links |
+| All verification agents | `verify-results.md` | Cumulative verification evidence across all phases |
 | Architect resume | `architect/notes/<TICKET_ID>/` | ANALYSIS.md, QUESTIONS.md — full continuity |
 
 ### Active Work Queue
@@ -181,27 +279,35 @@ Every task gets a folder: `./shared/work/<LINEAR-ID>/`
 
 ```
 ./shared/work/FLOQ-42/
-├── spec.md      # Technical specification (BIG tasks — written by Architect)
-│                  - Problem statement, scope, acceptance criteria
-│                  - Technical approach, decisions with rationale
-│                  - Contract changes, files to modify, test plan
+├── spec.md              # Technical specification (BIG tasks — by Architect)
+│                          - Problem statement, scope, acceptance criteria
+│                          - Technical approach, decisions with rationale
+│                          - Contract changes, files to modify, test plan
 │
-├── tasks.md     # Ordered task list (MEDIUM + BIG — written by Architect)
-│                  - Checkboxes for progress tracking
-│                  - Builder marks as complete during implementation
+├── tasks.md             # Ordered task list (MEDIUM + BIG — by Architect)
+│                          - Checkboxes for progress tracking
+│                          - Builder marks as complete during implementation
 │
-├── tests.md     # Test plan (BIG tasks — written by Architect)
-│                  - Unit tests, integration tests, curl commands
-│                  - Acceptance test checklist mapped to spec
+├── tests.md             # Test plan (BIG tasks — by Architect)
+│                          - Unit tests, integration tests, curl commands
+│                          - Smoke tests for post-deploy verification
+│                          - Acceptance test checklist mapped to spec
 │
-├── status.md    # Current state (ALL tasks — updated by all agents)
-│                  - Owner, state, pipeline type
-│                  - Timeline of state transitions
-│                  - Links to branch, PR, Linear ticket
+├── status.md            # Current state (ALL tasks — updated by all agents)
+│                          - Owner, state, pipeline type
+│                          - Timeline of state transitions
+│                          - Links to branch, PR, Linear ticket
 │
-└── review.md    # Review findings (after reviewer runs)
-                   - Verdict: PASS / WARN / FAIL
-                   - Blocking issues, warnings, notes
+├── verify-results.md    # Verification evidence (by Builder, Reviewer, Infra)
+│                          - Lint/typecheck, test suite, API tests
+│                          - DB verification, UI verification, log analysis
+│                          - Self-correction attempts and outcomes
+│                          - Post-deploy smoke test results
+│
+└── review.md            # Review findings (by Reviewer)
+                           - Verdict: PASS / WARN / FAIL
+                           - Verification evidence (independent re-execution)
+                           - Blocking issues, warnings, notes
 ```
 
 ## Linear Integration
