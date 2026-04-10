@@ -31,10 +31,12 @@ Use the Linear skill for all ticket operations:
 
 Before classifying a new task, check if this is a continuation:
 
-1. **Thread follow-up on existing work**: If the message references a Work ID (`WID-...`), PR URL, or agent signature (`— Builder`, `— Reviewer`, `— Infra`), this is a follow-up — NOT a new task.
+1. **Thread follow-up on existing work**: If the message references a Work ID (`WID-...`), PR URL, or agent signature (`— Builder`, `— Reviewer`, `— Infra`, `— Architect 🧠`), this is a follow-up — NOT a new task.
+   - Architect context → route to architect (same session = context preserved for resume/refine)
    - Builder context → route to builder (same session = context preserved)
    - Reviewer context → route to reviewer
    - Infra context → route to infra
+3. **User answering architect's questions**: If architect previously returned `NEEDS_INPUT` → route answer to architect (same session, context preserved).
 2. **Explicit Work ID or PR reference**: `WID-...` or PR URL → continuation. Read STATUS.md, route to builder.
 3. **Linear ticket reference**: If user mentions a ticket ID, fetch it first to understand context.
 
@@ -71,13 +73,14 @@ For any task that requires code changes or infrastructure work, assess THREE dim
 | Classification | Pipeline | When |
 |---|---|---|
 | Narrow + Obvious + None/Low | **SMALL**: builder only | Typo, config change, simple fix |
-| Narrow/Bounded + Clear + Any | **MEDIUM**: builder → reviewer | Standard feature or bug fix |
-| Bounded/Wide + Uncertain + Any | **BIG**: spec → builder → reviewer | Needs design before implementation |
-| Wide + Any + High | **BIG**: spec → builder → reviewer | Cross-cutting, risky changes |
+| Narrow/Bounded + Clear + Any | **MEDIUM**: architect (light) → builder → reviewer | Standard feature or bug fix |
+| Bounded/Wide + Uncertain + Any | **BIG**: architect (full) → builder → reviewer | Needs design before implementation |
+| Wide + Any + High | **BIG**: architect (full) → builder → reviewer | Cross-cutting, risky changes |
 
 ### Override signals (take precedence):
 - User says "just do it", "quick fix", "skip review" → SMALL
-- User says "spec this", "plan this", "design this" → BIG
+- User says "spec this", "plan this", "design this", "groom this" → BIG (architect grooming)
+- `/architect` → route directly to architect for grooming/design
 - `/builder` → route directly to builder
 - `/reviewer` → route directly to reviewer
 - `/infra` → route directly to infra
@@ -91,38 +94,54 @@ For trivial changes where review adds no value.
 3. `sessions_send` to builder: user's VERBATIM message + Linear ticket context, `thinking: "xhigh"`, timeout: 3600
 4. Relay builder's response. Update Linear with result. Done.
 
-## MEDIUM task pipeline (builder → reviewer)
+## MEDIUM task pipeline (architect → builder → reviewer)
 
-Standard implementation + review cycle.
+Standard implementation with light design + review cycle.
 
 1. Create Linear ticket if none exists, update state to "In Progress"
 2. Create work folder: `./shared/work/<LINEAR-ID>/`
-3. `sessions_send` to builder: user's VERBATIM message + Linear context, `thinking: "xhigh"`, timeout: 3600
-4. Wait for builder. Extract PR URLs from response.
-5. Comment on Linear: "Implementation complete. PR: <url>. Sending to review."
-6. `sessions_send` to reviewer: "Review PR <url> for <LINEAR-ID>", `thinking: "xhigh"`, timeout: 1800
-7. If FAIL: send reviewer's findings back to builder (max 3 iterations)
-8. If PASS/WARN: update Linear to "In Review" → "Done". Relay final result.
+3. Write initial `status.md` to `./shared/work/<LINEAR-ID>/status.md` (owner: router, state: grooming, pipeline: MEDIUM)
+4. Comment on Linear: "🧠 Technical grooming initiated by Architect agent."
+5. `sessions_send` to architect: "MODE: light-groom <LINEAR-ID>. <user's VERBATIM message>", `thinking: "xhigh"`, timeout: 3600
+6. Wait for architect. Expect `DESIGN_RESULT: READY` with tasks.md written to work folder.
+7. Comment on Linear: "Design ready. Tasks: N items. Starting implementation."
+8. Update Linear state to "In Progress"
+9. `sessions_send` to builder: "Implement <LINEAR-ID> per tasks at ./shared/work/<LINEAR-ID>/tasks.md", `thinking: "xhigh"`, timeout: 3600
+10. Wait for builder. Extract PR URLs from response.
+11. Comment on Linear: "Implementation complete. PR: <url>. Sending to review."
+12. `sessions_send` to reviewer: "Review PR <url> for <LINEAR-ID>", `thinking: "xhigh"`, timeout: 1800
+13. If FAIL: send reviewer's findings back to builder (max 3 iterations)
+14. If PASS/WARN: update Linear to "In Review" → "Done". Relay final result.
 
-## BIG task pipeline (spec → builder → reviewer)
+## BIG task pipeline (architect → builder → reviewer)
 
-For complex work that needs upfront design.
+For complex work that needs full upfront design. Architect produces spec.md, tasks.md, and tests.md.
 
 1. Create Linear ticket if none exists
 2. Create work folder: `./shared/work/<LINEAR-ID>/`
-3. **Generate spec.md**: Read the Linear ticket, analyze requirements, write detailed spec to `./shared/work/<LINEAR-ID>/spec.md`
-4. **Generate tasks.md**: Break the spec into ordered, trackable tasks in `./shared/work/<LINEAR-ID>/tasks.md`
-5. **Generate tests.md**: Define test plan, acceptance tests, curl commands in `./shared/work/<LINEAR-ID>/tests.md`
-6. Comment on Linear: "Spec ready for <LINEAR-ID>. Tasks: N items. Starting implementation."
-7. Update Linear state to "In Progress"
-8. `sessions_send` to builder: "Implement <LINEAR-ID> per spec at ./shared/work/<LINEAR-ID>/spec.md", `thinking: "xhigh"`, timeout: 3600
-9. Wait for builder. Extract PR URLs.
-10. Comment on Linear: "Implementation complete. PR: <url>. Sending to review."
-11. `sessions_send` to reviewer: "Review PR <url> for <LINEAR-ID>. Spec: ./shared/work/<LINEAR-ID>/spec.md", `thinking: "xhigh"`, timeout: 1800
-12. Review loop (max 3 iterations):
+3. Write initial `status.md` to `./shared/work/<LINEAR-ID>/status.md` (owner: router, state: grooming, pipeline: BIG)
+4. Comment on Linear: "🧠 Technical grooming initiated by Architect agent."
+5. `sessions_send` to architect: "MODE: full-groom <LINEAR-ID>. <user's VERBATIM message>", `thinking: "xhigh"`, timeout: 3600
+6. **Handle architect response:**
+   - If `GROOM_RESULT: READY` → spec.md, tasks.md, tests.md are written to work folder. Proceed to step 7.
+   - If `GROOM_RESULT: NEEDS_INPUT` → relay architect's questions VERBATIM to user. When user answers, send to architect: "MODE: resume <LINEAR-ID>. <user's answer>", same session. Repeat until READY.
+7. Comment on Linear: "Spec ready for <LINEAR-ID>. Starting implementation."
+8. Update Linear state to "In Progress"
+9. `sessions_send` to builder: "Implement <LINEAR-ID> per spec at ./shared/work/<LINEAR-ID>/spec.md", `thinking: "xhigh"`, timeout: 3600
+10. Wait for builder. Extract PR URLs.
+11. Comment on Linear: "Implementation complete. PR: <url>. Sending to review."
+12. `sessions_send` to reviewer: "Review PR <url> for <LINEAR-ID>. Spec: ./shared/work/<LINEAR-ID>/spec.md", `thinking: "xhigh"`, timeout: 1800
+13. Review loop (max 3 iterations):
     - If FAIL: send findings to builder, builder fixes, re-submit to reviewer
     - If PASS/WARN: proceed
-13. Update Linear to "Done". Comment with final summary.
+14. Update Linear to "Done". Comment with final summary.
+
+## Architect direct routing
+
+Any message mentioning design, spec, grooming, or `/architect`:
+- Route to architect agent with full Linear ticket context
+- Architect reports back, router relays to user
+- If architect needs input, relay questions and route answers back to same architect session
 
 ## Infra routing
 
@@ -142,7 +161,7 @@ For every task, create: `./shared/work/<LINEAR-ID>/`
 └── status.md    # Current state, owner, timeline, links
 ```
 
-For SMALL tasks, only `status.md` is required. For MEDIUM, add `tasks.md`. For BIG, all files.
+For SMALL tasks, only `status.md` is required. For MEDIUM, architect adds `tasks.md`. For BIG, architect adds all files (spec.md, tasks.md, tests.md).
 
 ## Linear status updates
 

@@ -1,7 +1,7 @@
 {
   "meta": {
     "profile": "floq",
-    "description": "Floq product development automation — 4-agent system",
+    "description": "Floq product development automation — 5-agent system",
     "version": "1.0.0"
   },
   "agents": {
@@ -46,7 +46,7 @@
           "emoji": "🚦"
         },
         "subagents": {
-          "allowAgents": ["builder", "reviewer", "infra"]
+          "allowAgents": ["architect", "builder", "reviewer", "infra"]
         },
         "sandbox": { "mode": "off" },
         "tools": {
@@ -55,6 +55,28 @@
           "exec": {
             "security": "full",
             "ask": "on-miss"
+          }
+        }
+      },
+      {
+        "id": "architect",
+        "name": "architect",
+        "workspace": "./agents/architect",
+        "model": {
+          "primary": "openai-codex/gpt-5.4",
+          "fallbacks": ["anthropic/claude-opus-4-6"]
+        },
+        "identity": {
+          "name": "Architect",
+          "emoji": "🧠"
+        },
+        "subagents": { "allowAgents": [] },
+        "sandbox": { "mode": "off" },
+        "tools": {
+          "profile": "full",
+          "exec": {
+            "security": "full",
+            "ask": "off"
           }
         }
       },
@@ -134,7 +156,7 @@
     },
     "agentToAgent": {
       "enabled": true,
-      "allow": ["router", "builder", "reviewer", "infra"]
+      "allow": ["router", "architect", "builder", "reviewer", "infra"]
     }
   },
   "session": {

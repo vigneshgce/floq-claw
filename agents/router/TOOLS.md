@@ -7,6 +7,7 @@
 - **Shell**: exec — for running scripts and CLI tools
 
 ## Tool routing
+- Design/spec/grooming requests → delegate to **architect** via `sessions_send`
 - Implementation requests → delegate to **builder** via `sessions_send`
 - Review requests → delegate to **reviewer** via `sessions_send`
 - Infrastructure requests → delegate to **infra** via `sessions_send`
