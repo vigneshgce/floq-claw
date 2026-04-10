@@ -105,54 +105,39 @@ Steps:
 - [ ] Environment variables documented?
 - [ ] Deployment considerations noted?
 
-## Independent verification (before verdict)
+## Verification evidence review (before verdict)
 
-After static code review, run independent verification when toolchain is available. This catches "works on my machine" issues.
+Builder runs all tests and records results in `verify-results.md` before creating the PR. Reviewer does NOT re-run the same tests — that's redundant. Instead, reviewer validates that builder's verification was thorough.
 
-### Verification steps
+### What to check in verify-results.md
 
-1. **Check out builder's branch**:
-   ```bash
-   git fetch origin
-   git checkout <builder-branch>
-   ```
+1. **Read** `./shared/work/<LINEAR-ID>/verify-results.md`
+2. **Validate coverage**: Did builder verify all the layers that matter for this change?
+   - Code change → lint + tests should be PASS
+   - API change → API tests should be present and PASS
+   - DB migration → schema verification should be present
+   - UI change → UI verification should be present
+3. **Flag gaps**: If the change touches an area but builder didn't verify it, flag as WARNING
+4. **Check blockers**: If builder documented blockers (toolchain unavailable), assess whether those gaps are acceptable
+5. **Check self-correction**: If builder had failures and self-corrected, verify the fix makes sense in the code
 
-2. **Re-run test suite**:
-   ```bash
-   npm test  # or: pytest, go test, gradlew test (via Docker if needed)
-   ```
-   Compare results against builder's `./shared/work/<LINEAR-ID>/verify-results.md`.
+### Record in review.md
 
-3. **Run API tests from tests.md** (if dev server can be started):
-   ```bash
-   npm run dev &
-   sleep 5
-   # Execute curl commands from tests.md
-   kill %1
-   ```
+```markdown
+## Verification Assessment
+- **verify-results.md reviewed**: Yes
+- **Builder verification verdict**: PASS/FAIL
+- **Coverage adequate**: Yes/No — <what's missing if No>
+- **Blockers noted**: <none | list>
+- **Self-correction quality**: <N/A | fixes look correct | concern — detail>
+```
 
-4. **Check verify-results.md**:
-   - Read builder's verification results
-   - Verify the claimed results match independent re-execution
-   - Flag any discrepancies
+### When reviewer SHOULD run tests
 
-5. **Record verification evidence in review.md**:
-   ```markdown
-   ## Verification Evidence
-   - **Tests re-executed**: Yes/No (if no, why)
-   - **Test result**: <N passed, N failed>
-   - **API tests**: <N/N passed>
-   - **Command used**: `<exact command>`
-   - **Discrepancies from builder**: <none | details>
-   ```
-
-### When verification tools are unavailable
-
-If the test toolchain is not available in the current runtime:
-1. Document the blocker (e.g., "Go toolchain unavailable", "JAVA_HOME not set")
-2. Rely on static code review + builder's verify-results.md
-3. Note in review.md: "Verification evidence limited to code inspection and builder's recorded results"
-4. Flag this as a WARNING (not blocking) if builder's verify-results.md shows PASS
+Only re-run tests if:
+- Builder's verify-results.md is missing or shows FAIL
+- The fix applied during self-correction looks suspicious
+- Builder documented a blocker but you have the toolchain available
 
 ## Verdict format
 

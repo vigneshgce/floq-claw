@@ -84,7 +84,7 @@ Architect does **light grooming**: reads ticket + relevant code, produces `tasks
 
 Builder runs **build-time verification** (lint + test + API checks) before creating PR. Self-corrects from failures (max 3 attempts).
 
-Reviewer runs **independent verification** (re-runs tests) during code review.
+Reviewer validates builder's verification evidence (reads verify-results.md, flags coverage gaps).
 
 If reviewer returns FAIL: `Router → Builder (fix) → Router → Reviewer (re-review)` (max 3 iterations)
 
@@ -119,7 +119,7 @@ Architect does **full grooming**: 6-step codebase analysis, 7-point readiness ch
 
 Builder runs **full verification** (lint + test + API + DB + UI if applicable) before PR. Self-corrects (max 3 attempts).
 
-Reviewer runs **independent verification** during review.
+Reviewer validates builder's verification coverage (does NOT re-run tests — builder already did).
 
 After merge + deploy, Infra runs **post-deploy verification** (health + smoke tests from tests.md + log check).
 
@@ -175,7 +175,7 @@ Agents don't just build features — they verify them at runtime, see the output
 | Layer | Owner | When | What | Feedback Loop |
 |-------|-------|------|------|---------------|
 | **Build-time** | Builder | After implementation, before PR | Lint, tests, API checks, DB verification, UI checks, log analysis | Parse failures → fix code → re-run (max 3 attempts) |
-| **Review-time** | Reviewer | During PR review | Independent test re-execution, verify builder's results | Discrepancies flagged in review.md |
+| **Review-time** | Reviewer | During PR review | Validate builder's verify-results.md, flag coverage gaps | Gaps or suspicious fixes flagged in review.md |
 | **Post-deploy** | Infra | After merge + deployment | Health check, smoke tests, production log check | Failures trigger alert to user via Router |
 
 ### Verification Flow (BIG pipeline)
@@ -194,10 +194,10 @@ Builder implements
 Write verify-results.md → Create PR
   │
   ▼
-Reviewer checks out branch
-  ├─→ Re-run tests independently
-  ├─→ Compare against builder's verify-results.md
-  └─→ Record verification evidence in review.md
+Reviewer reads verify-results.md
+  ├─→ Validate verification coverage (did builder test what matters?)
+  ├─→ Flag gaps (change touches X but no X verification)
+  └─→ Record verification assessment in review.md
   │
   ▼
 Merge → Deploy
@@ -256,8 +256,8 @@ All context passes through **shared work packet files** — never through messag
 |---------|---------------|-----------------|
 | Router → Architect | Linear ticket + work folder path | Problem statement, requirements, discussion |
 | Architect → Builder | `spec.md` + `tasks.md` + `tests.md` | Full design, acceptance criteria, task order |
-| Builder → Reviewer | `spec.md` + `verify-results.md` + PR URL in `status.md` | Spec for criteria, verification evidence, PR for diff |
-| Reviewer → Builder (fix) | `review.md` in shared folder | Blocking issues, verification discrepancies, specific file/line refs |
+| Builder → Reviewer | `spec.md` + `verify-results.md` + PR URL in `status.md` | Spec for criteria, verification evidence to validate, PR for diff |
+| Reviewer → Builder (fix) | `review.md` in shared folder | Blocking issues, verification gaps, specific file/line refs |
 | Router → Infra (post-deploy) | `tests.md` (smoke tests section) + `status.md` | What to verify against live service |
 | Any agent → Any agent | `status.md` | Current state, owner, timeline, links |
 | All verification agents | `verify-results.md` | Cumulative verification evidence across all phases |
