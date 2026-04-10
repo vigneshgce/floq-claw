@@ -1,436 +1,911 @@
-# Floq-Claw Agent Architecture
+# Floq-Claw Architecture
 
-## Overview
+> **5-agent OpenClaw profile for autonomous product development**
+> Design, build, verify, review, and deploy — orchestrated through Linear and GitHub.
 
-Floq-Claw is a 5-agent OpenClaw profile designed to automate product development for the Floq project. All work flows through Linear as the single source of truth, with GitHub as the code collaboration layer.
+---
 
-## Agents
+## Table of Contents
 
-| Agent | Emoji | Role | Thinking |
-|-------|-------|------|----------|
-| **Router** | 🚦 | Front-door orchestrator, task classifier, Linear coordinator | low |
-| **Architect** | 🧠 | CTO-level technical grooming and specification | xhigh |
-| **Builder** | 🛠️ | Implementation owner — writes code, branches, PRs | xhigh |
-| **Reviewer** | 🔬 | Principal engineer review gate — quality, security, correctness | xhigh |
-| **Infra** | 🚂 | Railway infrastructure — deployments, services, environments | high |
+- [System Overview](#system-overview)
+- [The 5 Agents](#the-5-agents)
+- [Hub-and-Spoke Orchestration](#hub-and-spoke-orchestration)
+- [Task Classification](#task-classification)
+- [Pipeline Flows](#pipeline-flows)
+- [Architect: Design-First Development](#architect-design-first-development)
+- [Verification: Build, Run, See, Fix](#verification-build-run-see-fix)
+- [Context Preservation](#context-preservation)
+- [Work Packet System](#work-packet-system)
+- [Linear Integration](#linear-integration)
+- [GitHub Integration](#github-integration)
+- [Infrastructure (Railway)](#infrastructure-railway)
+- [Security](#security)
+- [Error Recovery & Escalation](#error-recovery--escalation)
+- [Design Principles](#design-principles)
+- [Project Structure](#project-structure)
 
-## Communication Pattern: Hub-and-Spoke
+---
 
-```
-                    ┌─────────────┐
-                    │   Linear    │
-                    │  (tickets)  │
-                    └──────┬──────┘
-                           │
-                    ┌──────▼──────┐
-     ┌──────────────┤   Router    ├──────────────┐
-     │              │     🚦      │              │
-     │              └──┬──────┬───┘              │
-     │                 │      │                  │
-┌────▼─────┐  ┌───────▼──┐ ┌─▼────────┐  ┌──────▼─────┐
-│Architect │  │ Builder  │ │ Reviewer │  │   Infra    │
-│   🧠     │  │   🛠️     │ │    🔬    │  │    🚂      │
-└────┬─────┘  └───────┬──┘ └─┬────────┘  └──────┬─────┘
-     │                │      │                   │
-     │                └──────┴───────────────────┘
-     │                       │
-     │                ┌──────▼─────┐
-     │                │   GitHub   │
-     │                │   (PRs)    │
-     │                └────────────┘
-     │
-     └──→ Shared Work Packets
-          (spec.md, tasks.md, tests.md)
-```
-
-**CRITICAL RULE**: Router orchestrates ALL communication. Agents NEVER talk to each other directly. This prevents deadlocks and keeps routing deterministic.
-
-Flow is always: `Router → Agent → Router → Agent → Router`
-
-## Task Classification & Pipelines
-
-### Classification Dimensions
-
-| Dimension | Values | Description |
-|-----------|--------|-------------|
-| **Scope** | Narrow / Bounded / Wide | How much code changes |
-| **Ambiguity** | Obvious / Clear / Uncertain | How clear is the path |
-| **Risk** | None / Low / High | Production impact |
-
-### Three Pipelines
-
-#### SMALL (builder only)
-**When**: Narrow scope, obvious path, no/low risk (typo, config change, simple fix)
+## System Overview
 
 ```
-User → Router → Builder → Router → User
-                  │
-                  └──→ Linear (comment with result)
+                         ┌──────────────────────────────────────────────────┐
+                         │                   FLOQ-CLAW                     │
+                         │         5-Agent Development Automation          │
+                         └──────────────────────────────────────────────────┘
+
+    ┌─────────┐       ┌──────────┐       ┌──────────┐       ┌──────────┐       ┌─────────┐
+    │ LINEAR  │◄─────►│  ROUTER  │◄─────►│  GITHUB  │       │ RAILWAY  │       │  USER   │
+    │ tickets │       │   🚦     │       │   PRs    │       │  deploy  │       │         │
+    └─────────┘       └────┬─────┘       └──────────┘       └──────────┘       └────┬────┘
+                           │                                                        │
+              ┌────────────┼────────────────────────────┐                           │
+              │            │                            │                           │
+         ┌────▼────┐  ┌────▼────┐  ┌─────────┐  ┌──────▼──┐                        │
+         │ARCHITECT│  │ BUILDER │  │REVIEWER │  │  INFRA  │                        │
+         │   🧠    │  │   🛠️    │  │   🔬    │  │   🚂    │                        │
+         │ design  │  │  code   │  │ review  │  │ deploy  │                        │
+         └────┬────┘  └────┬────┘  └────┬────┘  └────┬────┘                        │
+              │            │            │            │                              │
+              ▼            ▼            ▼            ▼                              │
+    ┌──────────────────────────────────────────────────────┐                        │
+    │              SHARED WORK PACKETS                     │◄───────────────────────┘
+    │  spec.md | tasks.md | tests.md | verify-results.md   │   (visible to user)
+    └──────────────────────────────────────────────────────┘
 ```
 
-Files created: `status.md` only. No design needed.
-
-#### MEDIUM (architect → builder → reviewer)
-**When**: Standard feature or bug fix, clear requirements
+**How it works in one line:**
 
 ```
-User → Router → Architect → Router → Builder → Router → Reviewer → Router → User
-                  │                    │                    │
-                  └──→ tasks.md        ├──→ GitHub PR       ├──→ GitHub PR review
-                                       └──→ Linear          └──→ Linear
+Linear ticket → Router classifies → Architect designs → Builder implements → Builder verifies
+→ Reviewer reviews → Infra deploys + verifies → Linear updated to Done
 ```
 
-Architect does **light grooming**: reads ticket + relevant code, produces `tasks.md` with ordered implementation steps.
+---
 
-Builder runs **build-time verification** (lint + test + API checks) before creating PR. Self-corrects from failures (max 3 attempts).
+## The 5 Agents
 
-Reviewer validates builder's verification evidence (reads verify-results.md, flags coverage gaps).
+### 🚦 Router — The Traffic Controller
 
-If reviewer returns FAIL: `Router → Builder (fix) → Router → Reviewer (re-review)` (max 3 iterations)
+| Property | Value |
+|----------|-------|
+| **Role** | Front-door orchestrator, task classifier, Linear coordinator |
+| **Thinking** | `low` — lightweight classification, no deep analysis |
+| **Default** | Yes — all incoming messages hit Router first |
+| **Does** | Classify tasks, route to agents, orchestrate pipelines, keep Linear updated |
+| **Does NOT** | Write code, review PRs, design specs, manage infrastructure |
 
-After review PASS, Router can optionally trigger **post-deploy verification** via Infra (health + smoke tests + log check).
+Router is the **single coordinator**. It receives every message, decides what kind of work it is, and orchestrates the right pipeline. It relays agent responses verbatim — never summarizes or filters.
 
-Files created: `status.md`, `tasks.md` (by architect), `verify-results.md` (by builder/reviewer/infra), `review.md` (by reviewer)
+---
 
-#### BIG (architect → builder → reviewer)
-**When**: Complex work, uncertain approach, wide scope, high risk
+### 🧠 Architect — The CTO
+
+| Property | Value |
+|----------|-------|
+| **Role** | CTO-level technical grooming and specification |
+| **Thinking** | `xhigh` — deep codebase analysis and spec writing |
+| **Default** | No — receives work from Router |
+| **Does** | Read codebase, trace code paths, produce specs, ask clarifying questions |
+| **Does NOT** | Write production code, review PRs, deploy services |
+
+Architect reads the codebase before forming opinions. It produces specs so precise that Builder implements with near-100% accuracy on the first pass. When requirements are unclear, it asks structured questions — each with context explaining why the answer matters.
+
+**4 Operating Modes:**
+
+| Mode | When | Output |
+|------|------|--------|
+| **Light Groom** | MEDIUM tasks | `tasks.md` + lightweight analysis |
+| **Full Groom** | BIG tasks | `spec.md` + `tasks.md` + `tests.md` + deep analysis |
+| **Resume** | User answers questions | Picks up where it left off |
+| **Refine** | "Change the approach" | Targeted spec updates |
+
+---
+
+### 🛠️ Builder — The Engineer
+
+| Property | Value |
+|----------|-------|
+| **Role** | Implementation owner — writes code, creates branches and PRs |
+| **Thinking** | `xhigh` — complex implementation reasoning |
+| **Default** | No — receives work from Router |
+| **Does** | Write code, run tests, verify output, self-correct, create PRs |
+| **Does NOT** | Design specs, review other agents' work, deploy to production |
+
+Builder follows specs and task lists. It writes code, verifies it works (lint, tests, API checks, DB, UI), self-corrects from failures, and creates PRs. One feature per session — fresh context each time.
+
+---
+
+### 🔬 Reviewer — The Principal Engineer
+
+| Property | Value |
+|----------|-------|
+| **Role** | Quality gate — correctness, security, performance, maintainability |
+| **Thinking** | `xhigh` — thorough review analysis |
+| **Default** | No — receives PRs from Router |
+| **Does** | Review code against specs, validate verification evidence, post GitHub reviews |
+| **Does NOT** | Write code, design specs, re-run tests (builder already did) |
+
+Reviewer checks code like a principal engineer: correctness against spec, security (OWASP), performance (N+1, indexes), and test coverage. It reads Builder's `verify-results.md` to validate verification was thorough — flags gaps, doesn't re-run the same tests.
+
+**Verdict rules:**
+- **PASS** — No blockers. Production-ready.
+- **WARN** — No blockers but significant warnings. Merge OK, follow-up recommended.
+- **FAIL** — Blocking issues. Security violations = automatic FAIL.
+
+---
+
+### 🚂 Infra — The DevOps Engineer
+
+| Property | Value |
+|----------|-------|
+| **Role** | Railway infrastructure — deployments, services, environments |
+| **Thinking** | `high` — infrastructure requires care |
+| **Default** | No — receives infra tasks from Router |
+| **Does** | Deploy, manage env vars, check logs, run post-deploy smoke tests |
+| **Does NOT** | Write application code, design specs, review PRs |
+
+Infra manages Railway services, runs post-deploy verification (health checks, smoke tests, log analysis), and handles rollbacks when deployments fail.
+
+---
+
+## Hub-and-Spoke Orchestration
 
 ```
-User → Router → Architect ──→ [spec.md, tasks.md, tests.md]
-                  │                │
-                  │    (if NEEDS_INPUT: questions → user → resume)
-                  │
-                  ├──→ Builder (implement per spec)
-                  │       │
-                  │       ├──→ GitHub PR
-                  │       └──→ Linear (progress updates)
-                  │
-                  ├──→ Reviewer (review against spec)
-                  │       │
-                  │       ├──→ GitHub PR review
-                  │       └──→ Linear (review verdict)
-                  │
-                  ├──→ [Review loop: max 3 iterations]
-                  │
-                  └──→ Infra (post-deploy verification: health + smoke + logs)
+                              USER
+                               │
+                               ▼
+                         ┌───────────┐
+                    ┌────┤  ROUTER   ├────┐
+                    │    │    🚦     │    │
+                    │    └─┬───┬───┬─┘    │
+                    │      │   │   │      │
+               ┌────▼──┐ ┌─▼───▼─┐ │ ┌────▼──┐
+               │ARCHIT.│ │BUILDER│ │ │ INFRA │
+               │  🧠   │ │  🛠️   │ │ │  🚂   │
+               └───────┘ └───────┘ │ └───────┘
+                                   │
+                             ┌─────▼───┐
+                             │REVIEWER │
+                             │   🔬    │
+                             └─────────┘
 ```
 
-Architect does **full grooming**: 6-step codebase analysis, 7-point readiness checklist, produces all three artifacts. May ask structured questions before reaching READY state.
+### Rules
 
-Builder runs **full verification** (lint + test + API + DB + UI if applicable) before PR. Self-corrects (max 3 attempts).
+1. **Router is the ONLY coordinator** — agents never talk to each other directly
+2. **Flow is always**: `Router → Agent → Router → Agent → Router`
+3. **Router relays verbatim** — never summarizes, rewrites, or filters agent responses
+4. **Prevents deadlocks** — sequential orchestration from Router's own turn
+5. **Ping-pong disabled** — `maxPingPongTurns: 0` prevents invisible inter-agent loops
 
-Reviewer validates builder's verification coverage (does NOT re-run tests — builder already did).
+### Session Persistence
 
-After merge + deploy, Infra runs **post-deploy verification** (health + smoke tests from tests.md + log check).
+Each agent's session is **persistent** across `sessions_send` calls. Builder retains full context when receiving fix instructions. Architect retains context when resuming after user answers. No context is lost between Router orchestration steps.
 
-Files created: `spec.md`, `tasks.md`, `tests.md` (by architect), `status.md`, `verify-results.md` (by builder/reviewer/infra), `review.md` (by reviewer)
+---
+
+## Task Classification
+
+Router classifies every incoming task on **3 dimensions** before routing:
+
+```
+                    ┌─────────────────────────────────────────┐
+                    │          CLASSIFICATION MATRIX           │
+                    ├─────────────┬───────────┬───────────────┤
+                    │   SCOPE     │ AMBIGUITY │     RISK      │
+                    ├─────────────┼───────────┼───────────────┤
+                    │ Narrow      │ Obvious   │ None          │
+                    │ Bounded     │ Clear     │ Low           │
+                    │ Wide        │ Uncertain │ High          │
+                    └─────────────┴───────────┴───────────────┘
+```
+
+| Scope | What it means | Examples |
+|-------|---------------|---------|
+| **Narrow** | Single file, few lines, one service | Typo, config value, rename |
+| **Bounded** | Multiple files in one service, clear boundaries | Add endpoint, fix feature |
+| **Wide** | Cross-service, cross-repo, APIs + DB + infra | New capability, system redesign |
+
+| Ambiguity | What it means | Examples |
+|-----------|---------------|---------|
+| **Obvious** | One correct implementation, no decisions | "Change timeout to 60" |
+| **Clear** | Intent clear, minor decisions for builder | "Add pagination to users endpoint" |
+| **Uncertain** | Multiple valid approaches, tradeoffs | "Implement rate limiting" |
+
+| Risk | What it means | Examples |
+|------|---------------|---------|
+| **None** | Docs, tests, dev tooling | README update |
+| **Low** | Single service, reversible | New internal endpoint |
+| **High** | Data migration, auth, shared APIs | Schema migration, auth rewrite |
+
+### Override Signals
+
+| Signal | Action |
+|--------|--------|
+| "just do it", "quick fix", "skip review" | Force **SMALL** |
+| "spec this", "plan this", "design this", "groom this" | Force **BIG** |
+| `/architect` | Route directly to Architect |
+| `/builder` | Route directly to Builder |
+| `/reviewer` | Route directly to Reviewer |
+| `/infra` | Route directly to Infra |
+
+---
+
+## Pipeline Flows
+
+### SMALL Pipeline — Builder Only
+
+> **When**: Narrow + Obvious + None/Low risk
+> **Examples**: Typo fix, config change, simple bug fix
+
+```
+┌──────┐     ┌──────────┐     ┌─────────┐     ┌──────────┐     ┌──────┐
+│ USER │────►│  ROUTER  │────►│ BUILDER │────►│  ROUTER  │────►│ USER │
+└──────┘     │  classify │     │  code   │     │  relay   │     └──────┘
+             │  as SMALL │     │  commit │     │  update  │
+             └──────────┘     │  push   │     │  Linear  │
+                              └─────────┘     └──────────┘
+```
+
+**Work packet**: `status.md` only
+**No design, no review** — overhead isn't worth it for trivial changes.
+
+---
+
+### MEDIUM Pipeline — Architect + Builder + Reviewer
+
+> **When**: Narrow/Bounded + Clear + Any risk
+> **Examples**: Standard feature, bug fix with clear requirements
+
+```
+┌──────┐     ┌────────┐     ┌───────────┐     ┌─────────┐     ┌──────────┐     ┌──────────┐
+│ USER │────►│ ROUTER │────►│ ARCHITECT │────►│ BUILDER │────►│ REVIEWER │────►│  ROUTER  │
+└──────┘     │classify│     │  light    │     │  code   │     │  review  │     │  relay   │
+             │MEDIUM  │     │  groom    │     │  verify │     │  verdict │     │  update  │
+             └────────┘     │           │     │  PR     │     │          │     │  Linear  │
+                            │ tasks.md  │     │         │     │ review.md│     └──────────┘
+                            └───────────┘     └─────────┘     └──────────┘
+                                                                  │
+                                                           FAIL? (max 3x)
+                                                                  │
+                                                          ┌───────▼───────┐
+                                                          │ Builder fixes │
+                                                          │ → re-review   │
+                                                          └───────────────┘
+```
+
+**Work packet**: `status.md`, `tasks.md`, `verify-results.md`, `review.md`
+**Post-deploy** (optional): Router sends to Infra for smoke tests after merge.
+
+---
+
+### BIG Pipeline — Full Spec-Driven Development
+
+> **When**: Bounded/Wide + Uncertain + Any risk, OR Wide + Any + High
+> **Examples**: Complex feature, cross-service change, architectural decision
+
+```
+┌──────┐     ┌────────┐     ┌───────────────────────────────────────┐
+│ USER │────►│ ROUTER │────►│              ARCHITECT                │
+└──────┘     │classify│     │                                       │
+             │  BIG   │     │  1. Fetch Linear ticket               │
+             └────────┘     │  2. Deep codebase analysis (6 steps)  │
+                            │  3. Readiness checklist (7 criteria)  │
+                            │                                       │
+                            │  ┌─ READY ──────────────────────────┐ │
+                            │  │ spec.md + tasks.md + tests.md    │ │
+                            │  └──────────────────────────────────┘ │
+                            │                                       │
+                            │  ┌─ NEEDS_INPUT ────────────────────┐ │
+                            │  │ Questions → User → Resume        │ │
+                            │  └──────────────────────────────────┘ │
+                            └──────────────┬────────────────────────┘
+                                           │
+                                           ▼
+                            ┌──────────────────────────────┐
+                            │           BUILDER            │
+                            │                              │
+                            │  1. Read spec + tasks         │
+                            │  2. Implement per spec        │
+                            │  3. Verify (lint/test/API/DB) │
+                            │  4. Self-correct (max 3x)     │
+                            │  5. UI checks (async bg)      │
+                            │  6. Create PR                 │
+                            └──────────────┬───────────────┘
+                                           │
+                                           ▼
+                            ┌──────────────────────────────┐
+                            │          REVIEWER            │
+                            │                              │
+                            │  1. Review against spec       │
+                            │  2. Validate verify-results   │
+                            │  3. Security/perf checklist   │
+                            │  4. Verdict: PASS/WARN/FAIL   │
+                            └──────────────┬───────────────┘
+                                           │
+                              ┌────────────┼────────────┐
+                              │            │            │
+                           PASS         WARN         FAIL
+                              │            │            │
+                              ▼            ▼            ▼
+                           Merge        Merge     Builder fixes
+                              │            │       → re-review
+                              ▼            ▼       (max 3x)
+                            ┌──────────────────────────────┐
+                            │      INFRA (post-deploy)     │
+                            │                              │
+                            │  1. Health endpoint check     │
+                            │  2. Smoke tests from tests.md │
+                            │  3. Railway log check (5 min) │
+                            │  4. Report PASS/FAIL          │
+                            └──────────────────────────────┘
+                                           │
+                                           ▼
+                                   Linear → "Done"
+```
+
+**Work packet**: `spec.md`, `tasks.md`, `tests.md`, `status.md`, `verify-results.md`, `review.md`
+
+---
 
 ## Architect: Design-First Development
 
-The Architect agent ensures design work happens before implementation — never during it. This separation means:
+The Architect ensures design happens **before** implementation — never during it.
 
-- **Builder never guesses** — it implements from clear specs and task lists
-- **Reviewer has acceptance criteria** — it reviews against the spec, not just code quality
-- **Questions surface early** — before code is written, not during review
+```
+                    WHY ARCHITECT EXISTS
 
-### Architect Operating Modes
+    Without Architect              With Architect
+    ─────────────────              ──────────────────
+    Router (low thinking)          Architect (xhigh thinking)
+    guesses at spec                reads actual codebase
+    ↓                              ↓
+    Builder discovers              Builder follows precise spec
+    missing requirements           ↓
+    ↓                              Reviewer checks against
+    Reviewer finds                 clear acceptance criteria
+    design issues                  ↓
+    ↓                              First-pass success rate: HIGH
+    Multiple fix loops
+```
 
-| Mode | Trigger | Output |
-|------|---------|--------|
-| **Light Groom** | MEDIUM tasks | `tasks.md` + lightweight ANALYSIS.md |
-| **Full Groom** | BIG tasks | `spec.md` + `tasks.md` + `tests.md` + full ANALYSIS.md |
-| **Resume** | User answers architect's questions | Completes spec from where it left off |
-| **Refine** | "Change the approach for X" | Targeted spec updates |
+### Codebase Analysis Protocol (6 Steps)
 
-### Architect Notes (Per-Ticket)
+For every full grooming session, Architect follows ALL 6 steps:
 
-Architect stores working analysis at `./architect/notes/<TICKET_ID>/`:
+```
+Step 1: Identify affected domain
+        ├─→ Which services?
+        ├─→ Which frontend components?
+        ├─→ Which infra modules?
+        └─→ Cross-service dependencies?
+
+Step 2: Read repo context files
+        └─→ CLAUDE.md / AGENTS.md for architecture context
+
+Step 3: Trace code paths
+        ├─→ Routes / Controllers (entry points)
+        ├─→ Services / Business logic
+        ├─→ Repositories / DAOs (database)
+        ├─→ Models / Entities (schema)
+        ├─→ Tests (existing coverage)
+        └─→ Config (env vars, feature flags)
+
+Step 4: Map cross-service dependencies
+        ├─→ Service-to-service calls
+        ├─→ Shared libraries
+        ├─→ Database migrations across services
+        └─→ Queue/event consumers
+
+Step 5: Identify risks and edge cases
+        ├─→ Regressions, data corruption, performance
+        ├─→ Null data, concurrent access, rate limits
+        ├─→ Migration: backward compat, rollback
+        └─→ Security: auth, validation, data exposure
+
+Step 6: Write findings to ANALYSIS.md
+        └─→ File paths, DB tables, API contracts, risks, test gaps
+```
+
+### Readiness Checklist (7 Criteria — BIG tasks)
+
+All 7 must pass before Architect marks `GROOM_RESULT: READY`:
+
+| # | Criterion | What It Means |
+|---|-----------|---------------|
+| 1 | **Clear problem statement** | The "what" and "why" are unambiguous |
+| 2 | **Testable acceptance criteria** | Each can be verified with a specific test |
+| 3 | **Identified repos and services** | Every affected service listed with files |
+| 4 | **Feasible approach** | At least one viable approach with current architecture |
+| 5 | **No blocking questions** | All critical unknowns resolved |
+| 6 | **Documented risks** | Every risk has a concrete mitigation |
+| 7 | **Specified contracts** | API, schema, event changes fully defined |
+
+If ANY criterion fails → `GROOM_RESULT: NEEDS_INPUT` with structured questions.
+
+### Architect Notes (Per-Ticket Persistence)
 
 ```
 architect/notes/<TICKET_ID>/
-  ANALYSIS.md    — Raw codebase findings (files traced, dependencies, patterns)
-  QUESTIONS.md   — Open/answered questions with timestamps
-  TECH_SPEC.md   — Working draft spec (before promoting to shared work packet)
+├── ANALYSIS.md    — Raw codebase findings (files, deps, patterns)
+├── QUESTIONS.md   — Open/answered questions with timestamps
+└── TECH_SPEC.md   — Working draft (before promoting to shared work packet)
 ```
 
-These notes persist across sessions — architect picks up where it left off when resuming.
+Notes persist across sessions. When the same ticket comes back (resume/refine), Architect reads existing notes and picks up where it left off.
 
-### Readiness Checklist (BIG tasks)
+---
 
-All 7 criteria must pass before architect marks READY:
-1. Clear problem statement
-2. Testable acceptance criteria
-3. Identified repos and services
-4. Feasible approach
-5. No blocking questions
-6. Documented risks with mitigations
-7. Specified contracts (API/schema/events)
+## Verification: Build, Run, See, Fix
 
-## Verification Architecture: Build → Run → See → Fix
+Agents don't just build features — they **run them, see the output, and self-correct**. This creates a feedback loop at every stage.
 
-Agents don't just build features — they verify them at runtime, see the output, and self-correct. This creates a feedback loop at every stage.
-
-### 3-Layer Verification
-
-| Layer | Owner | When | What | Feedback Loop |
-|-------|-------|------|------|---------------|
-| **Build-time** | Builder | After implementation, before PR | Lint, tests, API checks, DB verification, UI checks, log analysis | Parse failures → fix code → re-run (max 3 attempts) |
-| **Review-time** | Reviewer | During PR review | Validate builder's verify-results.md, flag coverage gaps | Gaps or suspicious fixes flagged in review.md |
-| **Post-deploy** | Infra | After merge + deployment | Health check, smoke tests, production log check | Failures trigger alert to user via Router |
-
-### Verification Flow (BIG pipeline)
+### 3-Layer Verification Architecture
 
 ```
-Builder implements
-  │
-  ├─→ Lint/Typecheck ─→ Failures? ─→ Fix → Re-lint
-  ├─→ Test suite ────→ Failures? ─→ Fix → Re-test
-  ├─→ API tests (curl against dev server) ─→ Wrong response? ─→ Fix → Re-test
-  ├─→ DB verification (migrations, schema, data round-trip) ─→ Mismatch? ─→ Fix
-  ├─→ UI verification (DOM snapshot or screenshot) ─→ Wrong state? ─→ Fix
-  └─→ Log analysis (parse errors from dev server) ─→ Errors? ─→ Fix
-  │
-  ▼
-Write verify-results.md → Create PR
-  │
-  ▼
-Reviewer reads verify-results.md
-  ├─→ Validate verification coverage (did builder test what matters?)
-  ├─→ Flag gaps (change touches X but no X verification)
-  └─→ Record verification assessment in review.md
-  │
-  ▼
-Merge → Deploy
-  │
-  ▼
-Infra post-deploy verification
-  ├─→ Health endpoint check
-  ├─→ Smoke tests (read-only subset of tests.md against production)
-  └─→ Log check (errors in last 5 minutes)
-  │
-  ▼
-Results → verify-results.md → Linear "Done"
+    LAYER 1: BUILD-TIME                LAYER 2: REVIEW-TIME           LAYER 3: POST-DEPLOY
+    ────────────────────                ─────────────────────          ────────────────────
+    Owner: Builder                      Owner: Reviewer                Owner: Infra
+    When: Before PR                     When: During PR review         When: After merge
+    ┌────────────────────┐              ┌────────────────────┐         ┌────────────────────┐
+    │ Lint / Typecheck   │              │ Read verify-results│         │ Health endpoint     │
+    │ Test suite         │              │ Validate coverage  │         │ Smoke tests         │
+    │ API tests (curl)   │              │ Flag gaps          │         │ Log check (5 min)   │
+    │ DB verification    │              │ Check self-fixes   │         │ Report verdict      │
+    │ UI checks (tiered) │              │                    │         │                     │
+    │ Log analysis       │              │ Only re-run tests  │         │                     │
+    │                    │              │ if results missing │         │                     │
+    │ Self-correct loop  │              │ or suspicious      │         │                     │
+    │ (max 3 attempts)   │              │                    │         │                     │
+    └────────────────────┘              └────────────────────┘         └────────────────────┘
+            │                                    │                              │
+            ▼                                    ▼                              ▼
+    verify-results.md                    review.md                      verify-results.md
+    (build-time section)                 (verification assessment)      (post-deploy section)
 ```
 
-### Verification Artifact: verify-results.md
+### Builder Self-Correction Loop
 
-Every work packet gets a `verify-results.md` that records:
-- What was verified (lint, tests, API, DB, UI, logs)
-- Exact commands run and their output
-- Self-correction attempts (failure → fix → re-run)
-- Blockers (tools unavailable, server won't start)
-- Overall verdict (PASS/FAIL)
+```
+    ┌──────────────────────────────────────────────────────────────┐
+    │                    VERIFICATION LOOP                         │
+    │                                                              │
+    │   Attempt 1                Attempt 2              Attempt 3  │
+    │   ─────────                ─────────              ─────────  │
+    │   Run all checks           Re-run checks          Final try  │
+    │       │                        │                      │      │
+    │   PASS? ──→ PR            PASS? ──→ PR           PASS? ──→ PR│
+    │       │                        │                      │      │
+    │   FAIL?                    FAIL?                  FAIL?      │
+    │       │                        │                      │      │
+    │   Parse error              Parse error            PR anyway  │
+    │   Find root cause          Fix code               Document   │
+    │   Fix code ────────────►   ──────────────────►    failures   │
+    │                                                              │
+    └──────────────────────────────────────────────────────────────┘
+```
 
-This file is cumulative — Builder writes build-time results, Reviewer appends review-time results, Infra appends post-deploy results.
+### UI Verification: Tiered (Fast Blocks, Slow Runs Async)
 
-### UI Verification: Tiered Approach (Fast Blocking + Slow Background)
+Builder does NOT wait for slow frontend tests. UI verification is split into tiers:
 
-Frontend verification is split into fast checks (builder waits) and slow checks (builder doesn't wait).
-
-| Tier | Tool | Speed | Blocking? | What It Checks |
-|------|------|-------|-----------|----------------|
-| **Tier 1** | Vitest + Happy DOM | ~14ms/test | Yes | Component rendering, DOM structure, text content |
-| **Tier 2** | Playwright a11y snapshot | <1s/page | Yes | Page structure, elements, roles, a11y tree |
-| **Tier 3** | Playwright screenshot/tests | 4-10s/page | **No — background** | Visual appearance, layout, styles, interactions |
+```
+    ┌──────────────────────────────────────────────────────────────────────┐
+    │                      UI VERIFICATION TIERS                          │
+    ├───────────┬────────────────────────┬──────────┬──────────┬──────────┤
+    │   TIER    │ TOOL                   │  SPEED   │ BLOCKING │  CHECKS  │
+    ├───────────┼────────────────────────┼──────────┼──────────┼──────────┤
+    │  Tier 1   │ Vitest + Happy DOM     │ ~14ms    │   Yes    │ DOM,     │
+    │           │                        │ per test │          │ component│
+    │           │                        │          │          │ render   │
+    ├───────────┼────────────────────────┼──────────┼──────────┼──────────┤
+    │  Tier 2   │ Playwright a11y        │ <1s      │   Yes    │ Page     │
+    │           │ snapshot               │ per page │          │ structure│
+    │           │                        │          │          │ elements │
+    ├───────────┼────────────────────────┼──────────┼──────────┼──────────┤
+    │  Tier 3   │ Playwright screenshot  │ 4-10s    │   No     │ Visual   │
+    │           │ / visual tests         │ per page │ (async)  │ layout   │
+    │           │                        │          │          │ styles   │
+    └───────────┴────────────────────────┴──────────┴──────────┴──────────┘
+```
 
 ```
 Builder implements UI change
-  │
-  ├─→ [BLOCKING] Tier 1: Component tests (Happy DOM) — sub-second
-  ├─→ [BLOCKING] Tier 2: Playwright a11y snapshot — <1 second
-  │     └─→ Self-correct if structure is wrong (max 3)
-  │
-  ├─→ [BACKGROUND] Tier 3: Playwright visual tests — runs async
-  │     └─→ Results appended to verify-results.md when done
-  │
-  └─→ Create PR immediately (don't wait for Tier 3)
+   │
+   ├──→ [BLOCKING]   Tier 1: Component tests ─── sub-second
+   ├──→ [BLOCKING]   Tier 2: A11y snapshot ───── <1 second
+   │      └──→ Self-correct if structure wrong
+   │
+   ├──→ [BACKGROUND] Tier 3: Visual tests ────── runs async
+   │      └──→ Results appear in verify-results.md as ASYNC_FAIL if broken
+   │
+   └──→ Create PR immediately (don't wait for Tier 3)
 ```
 
-If Tier 3 background tests fail after PR is created, results show as `ASYNC_FAIL` in `verify-results.md`. Reviewer sees these during review.
+---
 
-### Self-Correction Loop
+## Context Preservation
+
+**Zero context loss between agents.** All handoffs go through shared work packet files — not message summaries.
 
 ```
-Attempt 1: Run verification
-  → If PASS: proceed to PR
-  → If FAIL: parse error, identify root cause, fix code
-
-Attempt 2: Re-run verification
-  → If PASS: proceed to PR
-  → If FAIL: parse error, fix code
-
-Attempt 3: Final attempt
-  → If PASS: proceed to PR
-  → If FAIL: create PR anyway, document all failures in verify-results.md
+    ┌───────────────────────────────────────────────────────────────────────┐
+    │                    CONTEXT FLOW BETWEEN AGENTS                       │
+    │                                                                       │
+    │   Router                                                              │
+    │     │                                                                 │
+    │     ├──→ Linear ticket + work folder path                             │
+    │     │                                                                 │
+    │     ▼                                                                 │
+    │   Architect                                                           │
+    │     │                                                                 │
+    │     ├──→ spec.md ──────────────────────────────► Builder reads        │
+    │     ├──→ tasks.md ─────────────────────────────► Builder follows      │
+    │     ├──→ tests.md ─────────────────────────────► Builder executes     │
+    │     │                                            Infra runs smoke     │
+    │     ▼                                                                 │
+    │   Builder                                                             │
+    │     │                                                                 │
+    │     ├──→ verify-results.md ────────────────────► Reviewer validates   │
+    │     ├──→ status.md (PR links) ─────────────────► Reviewer reads       │
+    │     │                                            Infra reads          │
+    │     ▼                                                                 │
+    │   Reviewer                                                            │
+    │     │                                                                 │
+    │     ├──→ review.md ────────────────────────────► Builder reads fixes  │
+    │     │                                                                 │
+    │     ▼                                                                 │
+    │   Infra                                                               │
+    │     │                                                                 │
+    │     └──→ verify-results.md (post-deploy) ──────► Router reads final  │
+    │                                                                       │
+    └───────────────────────────────────────────────────────────────────────┘
 ```
 
-Max 3 attempts prevents infinite loops. If builder can't self-correct after 3 tries, the failures are visible in verify-results.md for reviewer and user to see.
-
-## Context Preservation (Zero Loss Between Agents)
-
-All context passes through **shared work packet files** — never through message summaries alone.
-
-| Handoff | Context Medium | What's Preserved |
-|---------|---------------|-----------------|
-| Router → Architect | Linear ticket + work folder path | Problem statement, requirements, discussion |
-| Architect → Builder | `spec.md` + `tasks.md` + `tests.md` | Full design, acceptance criteria, task order |
-| Builder → Reviewer | `spec.md` + `verify-results.md` + PR URL in `status.md` | Spec for criteria, verification evidence to validate, PR for diff |
-| Reviewer → Builder (fix) | `review.md` in shared folder | Blocking issues, verification gaps, specific file/line refs |
-| Router → Infra (post-deploy) | `tests.md` (smoke tests section) + `status.md` | What to verify against live service |
-| Any agent → Any agent | `status.md` | Current state, owner, timeline, links |
-| All verification agents | `verify-results.md` | Cumulative verification evidence across all phases |
-| Architect resume | `architect/notes/<TICKET_ID>/` | ANALYSIS.md, QUESTIONS.md — full continuity |
+| From → To | Context Medium | What's Preserved |
+|-----------|---------------|-----------------|
+| Router → Architect | Linear ticket + work folder path | Problem, requirements, discussion |
+| Architect → Builder | `spec.md` + `tasks.md` + `tests.md` | Full design, criteria, task order |
+| Builder → Reviewer | `verify-results.md` + PR URL in `status.md` | Verification evidence, code diff |
+| Reviewer → Builder | `review.md` | Blocking issues, file/line refs |
+| Router → Infra | `tests.md` (smoke section) + `status.md` | What to verify against live service |
+| Architect resume | `architect/notes/<TICKET_ID>/` | ANALYSIS, QUESTIONS — full continuity |
 
 ### Active Work Queue
 
-`./shared/active.md` tracks all work in progress:
+`./shared/active.md` is the single source of truth for work ownership and state:
 
 ```
-| Work ID | Owner | State | Last Updated (UTC) | Branch/PR Links |
+┌──────────────────────────────────────────────────────────────────────┐
+│ Work ID                    │ Owner     │ State          │ Links     │
+├────────────────────────────┼───────────┼────────────────┼───────────┤
+│ FLOQ-42                    │ architect │ grooming       │ pending   │
+│ FLOQ-38                    │ builder   │ in_progress    │ PR #12    │
+│ FLOQ-35                    │ reviewer  │ review_pending │ PR #10    │
+└──────────────────────────────────────────────────────────────────────┘
+
+State flow: grooming → designed/groomed → in_progress → review_pending → done
 ```
 
-States flow: `grooming` → `designed`/`groomed` → `in_progress` → `review_pending` → `done`
+---
 
 ## Work Packet System
 
-Every task gets a folder: `./shared/work/<LINEAR-ID>/`
+Every task gets a folder at `./shared/work/<LINEAR-ID>/`. This is the **shared context** between all agents.
 
 ```
 ./shared/work/FLOQ-42/
-├── spec.md              # Technical specification (BIG tasks — by Architect)
-│                          - Problem statement, scope, acceptance criteria
-│                          - Technical approach, decisions with rationale
-│                          - Contract changes, files to modify, test plan
 │
-├── tasks.md             # Ordered task list (MEDIUM + BIG — by Architect)
-│                          - Checkboxes for progress tracking
-│                          - Builder marks as complete during implementation
+├── spec.md                     Written by: Architect (BIG tasks)
+│   ├── Problem statement       ────────────────────────────────────
+│   ├── Scope (in/out)          The complete technical specification.
+│   ├── Acceptance criteria     Builder implements from this.
+│   ├── Technical approach      Reviewer reviews against this.
+│   ├── Decisions + rationale
+│   ├── Contract changes (API, schema, events)
+│   ├── Rollout + rollback plan
+│   └── Files to modify
 │
-├── tests.md             # Test plan (BIG tasks — by Architect)
-│                          - Unit tests, integration tests, curl commands
-│                          - Smoke tests for post-deploy verification
-│                          - Acceptance test checklist mapped to spec
+├── tasks.md                    Written by: Architect (MEDIUM + BIG)
+│   ├── Ordered task list       ────────────────────────────────────
+│   ├── Checkboxes              Builder marks complete as it goes.
+│   └── Notes section           Builder adds deviations/discoveries.
 │
-├── status.md            # Current state (ALL tasks — updated by all agents)
-│                          - Owner, state, pipeline type
-│                          - Timeline of state transitions
-│                          - Links to branch, PR, Linear ticket
+├── tests.md                    Written by: Architect (BIG tasks)
+│   ├── Component tests (Tier 1)────────────────────────────────────
+│   ├── Integration tests (curl) Test commands for Builder to execute.
+│   ├── Edge case tests          Smoke tests for Infra post-deploy.
+│   ├── DB verification
+│   ├── UI verification (tiered)
+│   ├── Acceptance checklist
+│   └── Smoke tests (production-safe)
 │
-├── verify-results.md    # Verification evidence (by Builder, Reviewer, Infra)
-│                          - Lint/typecheck, test suite, API tests
-│                          - DB verification, UI verification, log analysis
-│                          - Self-correction attempts and outcomes
-│                          - Post-deploy smoke test results
+├── status.md                   Updated by: All agents
+│   ├── Owner + State           ────────────────────────────────────
+│   ├── Timeline                Tracks every state transition.
+│   ├── Branch + PR links       Single source for current status.
+│   └── Blockers + Next steps
 │
-└── review.md            # Review findings (by Reviewer)
-                           - Verdict: PASS / WARN / FAIL
-                           - Verification evidence (independent re-execution)
-                           - Blocking issues, warnings, notes
+├── verify-results.md           Written by: Builder, Reviewer, Infra
+│   ├── Lint / Typecheck        ────────────────────────────────────
+│   ├── Test suite results      Cumulative verification evidence.
+│   ├── API test results        Builder writes build-time results.
+│   ├── DB verification         Reviewer appends assessment.
+│   ├── UI — quick (blocking)   Infra appends post-deploy results.
+│   ├── UI — visual (async)
+│   ├── Log analysis
+│   ├── Self-correction log
+│   └── Post-deploy results
+│
+└── review.md                   Written by: Reviewer
+    ├── Verdict (PASS/WARN/FAIL)────────────────────────────────────
+    ├── Blocking issues          What must be fixed before merge.
+    ├── Warnings                 Should fix, not blocking.
+    ├── Notes                    Informational observations.
+    ├── Verification assessment  Did Builder's verification cover enough?
+    ├── Spec compliance          Per-criterion PASS/FAIL.
+    └── What's good              Acknowledge quality work.
 ```
+
+---
 
 ## Linear Integration
 
-Linear is the source of truth for all work. Every state transition is reflected in Linear.
+Linear is the **source of truth** for all work. Every state transition is reflected there.
 
-### State mapping
+### State Lifecycle
 
-| Agent Action | Linear State | Linear Comment |
-|---|---|---|
-| Router receives task | Backlog → In Progress | "Starting work on <ID>" |
-| Architect grooming | In Progress | "🧠 Technical grooming initiated" |
-| Architect spec ready | In Progress | "Tech spec ready — starting implementation" |
-| Builder starts coding | In Progress | "Builder working on branch: <name>" |
-| Builder creates PR | In Progress | "🔗 PR created: <url>" |
-| Reviewer starts review | In Review | "Reviewer analyzing PR" |
-| Reviewer: FAIL | In Progress | "Review FAIL — N blocking issues" |
-| Reviewer: PASS | Done | "✅ Review PASS — approved and ready to merge" |
-
-### Comment format
-
-All agent comments on Linear follow this format:
 ```
-**[Agent Name 🚦]** <action>
-
-<details if relevant>
+    ┌──────────┐     ┌────────────┐     ┌───────────┐     ┌──────┐
+    │ Backlog  │────►│In Progress │────►│ In Review │────►│ Done │
+    └──────────┘     └────────────┘     └───────────┘     └──────┘
+         │                │                   │                │
+    Router receives  Architect grooms    Reviewer starts   Review PASS
+    task             Builder implements  reviewing         or deploy
+                                                          verified
 ```
+
+### Breadcrumb Comments
+
+| Event | Comment |
+|-------|---------|
+| Grooming starts | `🧠 Technical grooming initiated by Architect agent.` |
+| Spec ready | `Tech spec ready for <ID>. Starting implementation.` |
+| Implementation starts | `🛠️ Implementation started. Work ID: <ID>` |
+| PR created | `🔗 PR created: <URL>` |
+| Review verdict | `✅ Code review: <VERDICT>. PR: <URL>` |
+| Deploy verified | `🏁 Deployment verified. All smoke tests passed.` |
+
+### Linear CLI
+
+```bash
+./skills/linear/linear.sh get <ID>              # Fetch ticket details
+./skills/linear/linear.sh comment <ID> "<text>"  # Add comment
+./skills/linear/linear.sh search <query>         # Search tickets
+./skills/linear/linear.sh update <ID> <field> <val>  # Update state
+./skills/linear/linear.sh create "<title>"       # Create ticket
+./skills/linear/linear.sh list-states            # Workflow states
+./skills/linear/linear.sh assign <ID> "<name>"   # Assign ticket
+```
+
+---
 
 ## GitHub Integration
 
-### Branch naming
+### Branch Naming
+
 ```
 builder/<LINEAR-ID>-<short-slug>
 ```
+
 Example: `builder/FLOQ-42-add-user-auth`
 
-### PR format
-```
+### PR Format
+
+```markdown
 ## Summary
-<what and why>
+<what this PR does and why>
 
 ## Changes
-<key files changed>
+<key files and what changed>
 
 ## Linear Ticket
 FLOQ-42: Add user authentication
 
+## Verification Results
+<summary from verify-results.md>
+
 ## Test Plan
-<verification steps>
+<how to verify these changes>
 ```
 
-### Review flow on GitHub
-- PASS → `gh pr review --approve`
-- WARN → `gh pr review --comment`
-- FAIL → `gh pr review --request-changes`
+### Review Actions
+
+| Verdict | GitHub Action |
+|---------|--------------|
+| **PASS** | `gh pr review --approve` |
+| **WARN** | `gh pr review --comment --body "<findings>"` |
+| **FAIL** | `gh pr review --request-changes --body "<findings>"` |
+
+---
 
 ## Infrastructure (Railway)
 
-The Infra agent manages Railway deployments:
+### What Infra Manages
 
-- **Deployments**: Deploy, monitor, rollback services
-- **Environments**: Manage env vars across staging/production
-- **Services**: Create, configure, monitor Railway services
-- **Databases**: PostgreSQL, Redis provisioning and management
-- **Networking**: Custom domains, internal service communication
+| Area | Capabilities |
+|------|-------------|
+| **Deployments** | Deploy, monitor, rollback services |
+| **Environments** | Manage env vars across staging/production |
+| **Services** | Create, configure, monitor Railway services |
+| **Databases** | PostgreSQL, Redis provisioning and management |
+| **Networking** | Custom domains, internal service communication |
+| **Post-Deploy** | Health checks, smoke tests, log verification |
 
-### Railway config files
-- `railway.toml` — Build and deploy configuration
-- `Procfile` — Process type definitions
-- `nixpacks.toml` — Build system configuration
+### Post-Deploy Verification Protocol
 
-## Security Rules
+```
+1. Wait for deployment to stabilize
+   └─→ railway deployments list / railway service info <service>
 
-1. Never commit secrets to git (API keys, tokens, passwords)
-2. Linear API key stored in `.linear-api-key` (gitignored)
-3. All PR changes reviewed before merge
-4. Security violations in review = automatic FAIL
-5. Production infrastructure changes require explicit confirmation
-6. Environment variables never logged or echoed
+2. Health endpoint check
+   └─→ curl -sf <service-url>/health
 
-## Error Recovery
+3. Smoke tests from tests.md
+   └─→ Run read-only curl tests against live service URL
 
-| Level | Action |
-|-------|--------|
-| 1 | Retry with error context |
-| 2 | Rollback to git checkpoint (builder) |
-| 3 | Escalate to router with summary of attempts |
-| 4 | Router escalates to user |
+4. Log check
+   └─→ railway logs <service> --since 5m | grep "error|exception|fatal"
 
-Review loop caps at 3 iterations. If builder can't fix reviewer's findings after 3 tries, router escalates to user.
+5. Report verdict
+   ├─→ DEPLOY_VERIFY: PASS — all checks passed
+   ├─→ DEPLOY_VERIFY: FAIL — details of what failed
+   └─→ DEPLOY_VERIFY: BLOCKED — missing service URL or health endpoint
+```
+
+### Railway Config Files
+
+| File | Purpose |
+|------|---------|
+| `railway.toml` | Build and deploy configuration |
+| `Procfile` | Process type definitions |
+| `nixpacks.toml` | Build system configuration |
+
+---
+
+## Security
+
+| Rule | Description |
+|------|-------------|
+| **No secrets in git** | API keys, tokens, passwords never committed |
+| **API key storage** | `.linear-api-key` stored in gitignored file |
+| **All PRs reviewed** | No code reaches production without Reviewer verdict |
+| **Security = auto FAIL** | Any security violation in review is automatic FAIL |
+| **Infra confirmation** | Production infrastructure changes require explicit user confirmation |
+| **No credential leaks** | Environment variables never logged, echoed, or included in responses |
+
+### Reviewer Security Checklist
+
+- No SQL injection (parameterized queries only)
+- No XSS (user input sanitized/escaped)
+- No command injection (no string-interpolated shell commands)
+- Authentication/authorization on all endpoints
+- No overly permissive CORS
+- Input validation at system boundaries
+
+---
+
+## Error Recovery & Escalation
+
+```
+    Level 1: Retry with error context
+        │
+        ▼
+    Level 2: Rollback to git checkpoint (Builder)
+        │
+        ▼
+    Level 3: Escalate to Router with summary
+        │
+        ▼
+    Level 4: Router escalates to User
+```
+
+### Bounded Iteration
+
+| Loop | Max Iterations | What Happens After |
+|------|---------------|-------------------|
+| Builder self-correction | 3 attempts | PR created with failures documented |
+| Review loop (Builder ↔ Reviewer) | 3 rounds | Router escalates to user |
+| Architect Q&A | Until READY | User answers resolve all questions |
+
+---
 
 ## Design Principles
 
-1. **Hub-and-spoke over peer-to-peer**: Router coordinates all communication. Prevents deadlocks, keeps routing deterministic, makes debugging simple.
+| # | Principle | Why |
+|---|-----------|-----|
+| 1 | **Hub-and-spoke** | Router coordinates everything. Prevents deadlocks, keeps routing deterministic. |
+| 2 | **Design before implementation** | Architect grooms every non-trivial task. Builder follows specs, never guesses. |
+| 3 | **Verify before merge** | Builder runs tests, sees output, self-corrects. Catches bugs before review. |
+| 4 | **Context through files** | Every handoff goes through shared work packets. No context lives only in messages. |
+| 5 | **Linear as source of truth** | All state lives in Linear. Work packets are local caches. Linear wins if diverged. |
+| 6 | **Deterministic classification** | Router classifies on scope/ambiguity/risk. Pipeline selection is rule-based. |
+| 7 | **Bounded iteration** | All loops have max attempts. Prevents infinite cycles, escalates to humans. |
+| 8 | **One feature per session** | Builder gets fresh context for each task. Prevents context exhaustion. |
+| 9 | **Everything visible** | All state changes in Linear, GitHub, and work packets. Nothing in the dark. |
+| 10 | **Fast checks block, slow checks don't** | UI Tier 1-2 are instant. Tier 3 visual tests run in background. |
 
-2. **Design before implementation**: Architect grooms every non-trivial task. Builder never guesses — it follows specs and task lists produced by someone who read the codebase first.
+---
 
-3. **Linear as source of truth**: All state lives in Linear. Work packets are local caches for agent context. If Linear and local state diverge, Linear wins.
+## Project Structure
 
-4. **Context through files, not messages**: Every agent handoff goes through shared work packet files. No context lives only in message history. This is how zero context loss is achieved.
+```
+floq-claw/
+│
+├── openclaw.json                   # Master config — 5 agents, models, tools, sessions
+│
+├── agents/
+│   ├── router/                     # 🚦 Router
+│   │   ├── IDENTITY.md             #    Name, emoji, role, thinking level
+│   │   ├── SOUL.md                 #    Personality, operating principles
+│   │   ├── TOOLS.md                #    Available tools, routing rules
+│   │   └── AGENTS.md               #    Classification, pipelines, orchestration
+│   │
+│   ├── architect/                  # 🧠 Architect
+│   │   ├── IDENTITY.md
+│   │   ├── SOUL.md                 #    CTO mindset, read-code-first principles
+│   │   ├── TOOLS.md
+│   │   └── AGENTS.md               #    4 modes, 6-step analysis, 7-point checklist
+│   │
+│   ├── builder/                    # 🛠️ Builder
+│   │   ├── IDENTITY.md
+│   │   ├── SOUL.md
+│   │   ├── TOOLS.md
+│   │   └── AGENTS.md               #    Git hygiene, verification loop, PR creation
+│   │
+│   ├── reviewer/                   # 🔬 Reviewer
+│   │   ├── IDENTITY.md
+│   │   ├── SOUL.md
+│   │   ├── TOOLS.md
+│   │   └── AGENTS.md               #    Review checklist, verdict rules, verification assessment
+│   │
+│   └── infra/                      # 🚂 Infra
+│       ├── IDENTITY.md
+│       ├── SOUL.md
+│       ├── TOOLS.md
+│       └── AGENTS.md               #    Railway CLI, post-deploy verification protocol
+│
+├── architect/
+│   └── notes/                      # Per-ticket analysis (ANALYSIS.md, QUESTIONS.md, TECH_SPEC.md)
+│
+├── skills/
+│   └── linear/                     # Linear API skill
+│       ├── SKILL.md                #    Skill documentation
+│       ├── linear.sh               #    GraphQL API wrapper (bash)
+│       └── .linear-api-key         #    (gitignored) API key
+│
+├── shared/
+│   ├── active.md                   # Work queue — owner, state, links per Work ID
+│   ├── templates/                  # Full templates with field descriptions
+│   │   ├── spec.md
+│   │   ├── tasks.md
+│   │   ├── tests.md
+│   │   ├── status.md
+│   │   └── verify-results.md
+│   └── work/                       # Per-ticket work packets
+│       ├── _TEMPLATE/              #    Base templates for new work packets
+│       └── <LINEAR-ID>/            #    One folder per ticket
+│
+├── scripts/
+│   ├── setup.sh                    # Initial setup (deps, API key, directories)
+│   ├── create-work-packet.sh       # Create work packet from Linear ticket
+│   └── sync-linear.sh             # Sync local state with Linear
+│
+└── docs/
+    └── architecture.md             # This file
+```
 
-5. **Deterministic pipeline selection**: Router classifies tasks based on scope/ambiguity/risk — not agent-decided. Phase transitions are rule-based.
+---
 
-6. **Bounded iteration**: Review loops cap at 3 attempts. Prevents infinite loops and escalates stuck work to humans.
-
-7. **One feature per session**: Builder handles one task per session to prevent context exhaustion. Fresh context for each delegation.
-
-8. **Everything visible**: All state changes appear in Linear comments, GitHub PRs, and local work packets. Nothing happens "in the dark."
+> **Floq-Claw** — Design, build, verify, review, deploy. Automated.
