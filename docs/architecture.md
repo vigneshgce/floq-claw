@@ -223,12 +223,30 @@ Every work packet gets a `verify-results.md` that records:
 
 This file is cumulative — Builder writes build-time results, Reviewer appends review-time results, Infra appends post-deploy results.
 
-### UI Verification Approaches
+### UI Verification: Tiered Approach (Fast Blocking + Slow Background)
 
-| Approach | How | When to Use |
-|----------|-----|-------------|
-| **DOM/Accessibility snapshot** | Playwright captures accessibility tree as JSON text | Default for any UI change — lightweight, deterministic |
-| **Screenshot + Vision** | Playwright takes screenshot, vision model analyzes | Critical UI features where visual correctness matters |
+Frontend verification is split into fast checks (builder waits) and slow checks (builder doesn't wait).
+
+| Tier | Tool | Speed | Blocking? | What It Checks |
+|------|------|-------|-----------|----------------|
+| **Tier 1** | Vitest + Happy DOM | ~14ms/test | Yes | Component rendering, DOM structure, text content |
+| **Tier 2** | Playwright a11y snapshot | <1s/page | Yes | Page structure, elements, roles, a11y tree |
+| **Tier 3** | Playwright screenshot/tests | 4-10s/page | **No — background** | Visual appearance, layout, styles, interactions |
+
+```
+Builder implements UI change
+  │
+  ├─→ [BLOCKING] Tier 1: Component tests (Happy DOM) — sub-second
+  ├─→ [BLOCKING] Tier 2: Playwright a11y snapshot — <1 second
+  │     └─→ Self-correct if structure is wrong (max 3)
+  │
+  ├─→ [BACKGROUND] Tier 3: Playwright visual tests — runs async
+  │     └─→ Results appended to verify-results.md when done
+  │
+  └─→ Create PR immediately (don't wait for Tier 3)
+```
+
+If Tier 3 background tests fail after PR is created, results show as `ASYNC_FAIL` in `verify-results.md`. Reviewer sees these during review.
 
 ### Self-Correction Loop
 

@@ -33,14 +33,22 @@
 - **Data round-trip**: <PASS | N/A | FAIL — detail>
 - **Rollback test**: <PASS | N/A | FAIL — detail>
 
-## UI Verification
-- **Method**: <DOM snapshot | screenshot + vision | N/A>
-- **Pages checked**: <list of URLs>
+## UI Verification — Quick Check (blocking)
+- **Tier**: <component tests (Happy DOM) | a11y snapshot (Playwright) | N/A>
+- **Command**: `<test command>`
+- **Pages/components checked**: <list>
 - **Result**: <PASS | FAIL | N/A>
 - **Findings**:
 ```
-<DOM snapshot or vision model assessment>
+<component test output or a11y snapshot>
 ```
+
+## UI Verification — Visual (background, async)
+- **Status**: <RUNNING | PASS | ASYNC_FAIL | SKIPPED>
+- **Method**: <Playwright screenshot | Playwright test suite | N/A>
+- **Command**: `<background command>`
+- **Result**: <PASS | ASYNC_FAIL — detail | PENDING>
+- **Report**: <path to playwright-report.json or screenshot, if available>
 
 ## Log Analysis
 - **Source**: <local dev server | Railway logs | N/A>

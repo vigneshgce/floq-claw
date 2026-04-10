@@ -23,8 +23,12 @@
 - **Schema check**: N/A
 - **Data round-trip**: N/A
 
-## UI Verification
-- **Method**: N/A
+## UI Verification — Quick Check (blocking)
+- **Tier**: N/A
+- **Result**: N/A
+
+## UI Verification — Visual (background, async)
+- **Status**: SKIPPED
 - **Result**: N/A
 
 ## Log Analysis

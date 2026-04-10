@@ -115,12 +115,33 @@ curl -s -w "\n%{http_code}" -X POST http://localhost:3000/api/<path> \
 
 ## UI verification (if applicable)
 
-### Pages to check
-- `http://localhost:<port>/<path>` — <what to look for>
+### Component tests — Tier 1 (FAST, blocking, ~14ms/test)
+<Component-level tests using Vitest + Happy DOM or Jest + jsdom. No browser needed.>
 
-### Expected UI state
-- <element 1>: <expected text/state>
-- <element 2>: <expected text/state>
+```bash
+# Command to run component tests
+<npx vitest run --environment happy-dom src/components/<component>.test.ts>
+```
+
+### Pages to check — Tier 2 (FAST, blocking, <1s/page)
+<Pages to verify with Playwright accessibility snapshot. Builder runs these and reads the a11y tree.>
+
+- `http://localhost:<port>/<path>` — <what to look for in a11y tree>
+
+### Expected UI state (for a11y snapshot verification)
+- <element role>: <expected text/name>
+- <element role>: <expected text/name>
+
+### Visual tests — Tier 3 (SLOW, background, 4-10s/page)
+<Playwright screenshot or visual regression tests. Builder runs these in background — does NOT wait.>
+
+```bash
+# Background visual test command
+<npx playwright test --reporter=json --output=./shared/work/<LINEAR-ID>/playwright-report.json>
+```
+
+### Pages for visual verification
+- `http://localhost:<port>/<path>` — <what visual aspects to check>
 
 ## Acceptance test checklist
 <Map to acceptance criteria from spec.md. Each criterion has a specific verification method.>

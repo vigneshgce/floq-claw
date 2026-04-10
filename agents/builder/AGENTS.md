@@ -227,14 +227,31 @@ If the database is not available locally, document the blocker.
 
 ### Step 5: UI verification (if frontend changes)
 
-If your changes affect the UI:
+If your changes affect the UI, use **tiered verification**. Fast checks are blocking (you wait). Slow checks run in background (you don't wait).
 
-**Option A: DOM snapshot (preferred — lightweight)**
+#### Tier 1 — Component tests (BLOCKING, ~14ms/test)
+
+If the project uses Vitest/Jest with Happy DOM or jsdom, run component tests. These are the fastest — no browser needed.
+
+```bash
+# Vitest with Happy DOM (fastest)
+npx vitest run --environment happy-dom src/components/<changed-component>.test.ts
+
+# Or Jest with jsdom
+npx jest src/components/<changed-component>.test.ts
+```
+
+These verify DOM structure, text content, component rendering. Sub-second for most test files.
+
+#### Tier 2 — Accessibility snapshot (BLOCKING, <1s/page)
+
+Quick structural check using Playwright. Captures the page's accessibility tree — tells you what elements exist, their roles, text, and structure. No screenshot, no rendering delay.
+
 ```bash
 node -e "
   const { chromium } = require('playwright');
   (async () => {
-    const browser = await chromium.launch();
+    const browser = await chromium.launch({ headless: true });
     const page = await browser.newPage();
     await page.goto('http://localhost:3000/<path>');
     const snapshot = await page.accessibility.snapshot();
@@ -244,25 +261,59 @@ node -e "
 "
 ```
 
-Read the accessibility tree. Check that expected elements, text, and structure are present per the spec.
+Read the accessibility tree output. Check that expected elements, text, and structure are present per the spec. This takes under 1 second and catches most structural issues.
 
-**Option B: Screenshot (for visual features)**
+If a11y snapshot shows problems → fix code → re-run (part of the main self-correction loop).
+
+#### Tier 3 — Visual verification (BACKGROUND, optional)
+
+For visual features (layout, styling, visual regressions), run Playwright screenshot tests **in the background**. Do NOT wait for these — proceed to PR creation immediately.
+
 ```bash
+# Start visual tests in background
+npx playwright test --reporter=json --output=./shared/work/<LINEAR-ID>/playwright-report.json &
+VISUAL_PID=$!
+echo "Visual tests running in background (PID: $VISUAL_PID)"
+
+# OR: simple screenshot capture in background
 node -e "
   const { chromium } = require('playwright');
   (async () => {
-    const browser = await chromium.launch();
+    const browser = await chromium.launch({ headless: true });
     const page = await browser.newPage();
     await page.goto('http://localhost:3000/<path>');
     await page.screenshot({ path: './shared/work/<LINEAR-ID>/verify-ui.png', fullPage: true });
     await browser.close();
+    console.log('Screenshot saved');
   })();
-"
+" &
+
+# Continue immediately — don't wait
 ```
 
-Read the screenshot and assess whether it matches spec expectations.
+**After PR is created**, check if background tests finished:
+```bash
+# Check if visual tests completed
+wait $VISUAL_PID 2>/dev/null
+EXIT_CODE=$?
+if [ $EXIT_CODE -ne 0 ]; then
+  echo "ASYNC_FAIL: Visual tests failed"
+  # Append failure details to verify-results.md
+fi
+```
 
-If Playwright is not available, document the blocker.
+If background tests fail, append results to `verify-results.md` with status `ASYNC_FAIL`. The reviewer will see these when reviewing the PR.
+
+#### When to use which tier
+
+| Change Type | Tier 1 (component) | Tier 2 (a11y snapshot) | Tier 3 (visual, background) |
+|-------------|-------------------|----------------------|---------------------------|
+| Component logic/state | Yes | Skip | Skip |
+| Page structure/layout | Skip | Yes | Optional |
+| Styling/visual design | Skip | Yes (structure) | Yes (appearance) |
+| Full UI feature | Yes | Yes | Yes |
+
+If Playwright is not available, document the blocker and rely on Tier 1 (component tests) only.
 
 ### Step 6: Log analysis
 
